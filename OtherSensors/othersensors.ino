@@ -34,10 +34,13 @@ FDC1004 FDC;    // FDC1004 sensor object
 
 // HTU21D Temperature & Humidity sensor initialization
 HTU21D myHumidity; // Create an instance of the HTU21D object
+float temp, humd;
+bool foundHTU21D = false; // so can skip if there is an error with only this sensor
 
 // CCS811 eCO2 and TVOC sensor initialization
 CCS811 ccs811;
 uint16_t eco2, etvoc, errstat, raw;
+bool foundCO2 = false; // so can skip if there is an error with only this sensor
 
 // SD stuff
 //  SD_FAT_TYPE = 0 for SdFat/File as defined in SdFatConfig.h,
@@ -227,20 +230,34 @@ void setup()
 
     // Initialize the sensors
     myHumidity.begin();
+    if (myHumidity.readTemperature() > 900)
+    { // the default when not found is 998
+        Serial.println("Check circuit. HTU21D not found!");
+        foundHTU21D = false;
+    }
+    else
+    {
+        foundHTU21D = true;
+    }
 
     // Initialize CCS811 sensor
-    bool ok = ccs811.begin();
-    if (!ok)
+    if (!ccs811.begin())
     {
         Serial.println("setup: CCS811 begin FAILED");
-        return;
+        foundCO2 = false;
     }
-    // Start measuring (1 second mode) for CCS811
-    ok = ccs811.start(CCS811_MODE_1SEC);
-    if (!ok)
+    else
     {
-        Serial.println("setup: CCS811 start FAILED");
-        return;
+        // Start measuring (1 second mode) for CCS811
+        if (!ccs811.start(CCS811_MODE_1SEC))
+        {
+            Serial.println("setup: CCS811 start FAILED");
+            foundCO2 = false;
+        }
+        else
+        {
+            foundCO2 = true;
+        }
     }
 
     // Initialize SD card
@@ -294,7 +311,7 @@ void loop()
         }
 
         // Print capacitance data to the serial monitor
-        // Serial.println(capacitanceLine);
+        Serial.println(capacitanceLine);
     }
 
     // Check if it's time to log temperature, humidity, eCO2, TVOC (every 5 minutes)
@@ -303,51 +320,58 @@ void loop()
         lastSensorReadTime = currentMillis;
 
         // Read temperature and humidity
-        float temp, humd;
-        unsigned long temtimems = currentMillis;
-        readTemperatureAndHumidity(temp, humd);
-
-        // Log temperature data to SD card
-        String tempLine = String(temtimems) + "," +
-                          "Temperature" + "," +
-                          String(temp, 1);
-        if (dataFile)
+        if (foundHTU21D)
         {
-            dataFile.println(tempLine); // Write data to the file
-        }
+            unsigned long temtimems = currentMillis;
+            readTemperatureAndHumidity(temp, humd);
 
-        // Log humidity data to SD card
-        String humidityLine = String(temtimems) + "," +
-                              "Humidity" + "," +
-                              String(humd, 1);
-        if (dataFile)
-        {
-            dataFile.println(humidityLine); // Write data to the file
+            // Log temperature data to SD card
+            String tempLine = String(temtimems) + "," +
+                              "Temperature" + "," +
+                              String(temp, 1);
+            if (dataFile)
+            {
+                dataFile.println(tempLine); // Write data to the file
+            }
+
+            // Log humidity data to SD card
+            String humidityLine = String(temtimems) + "," +
+                                  "Humidity" + "," +
+                                  String(humd, 1);
+            if (dataFile)
+            {
+                dataFile.println(humidityLine); // Write data to the file
+            }
+            // Print data to the serial monitor
+            Serial.println(tempLine);
+            Serial.println(humidityLine);
         }
 
         // Read eCO2 and TVOC values
-        unsigned long co2timems = currentMillis;
-        readCO2TVOC(eco2, etvoc); // Read eCO2 and TVOC data
-
-        // Log eCO2 and TVOC data to SD card
-        String eco2Line = String(co2timems) + "," +
-                          "eCO2" + "," +
-                          String(eco2);
-        if (dataFile)
+        if (foundCO2)
         {
-            dataFile.println(eco2Line); // Write data to the file
-        }
+            unsigned long co2timems = currentMillis;
+            readCO2TVOC(eco2, etvoc); // Read eCO2 and TVOC data
 
-        String tvocLine = String(co2timems) + "," +
-                          "TVOC" + "," +
-                          String(etvoc);
-        if (dataFile)
-        {
-            dataFile.println(tvocLine); // Write data to the file
-        }
+            // Log eCO2 and TVOC data to SD card
+            String eco2Line = String(co2timems) + "," +
+                              "eCO2" + "," +
+                              String(eco2);
+            if (dataFile)
+            {
+                dataFile.println(eco2Line); // Write data to the file
+            }
 
-        // Print data to the serial monitor
-        // Serial.println(eco2Line);
-        // Serial.println(tvocLine);
+            String tvocLine = String(co2timems) + "," +
+                              "TVOC" + "," +
+                              String(etvoc);
+            if (dataFile)
+            {
+                dataFile.println(tvocLine); // Write data to the file
+            }
+            // Print data to the serial monitor
+            Serial.println(eco2Line);
+            Serial.println(tvocLine);
+        }
     }
 }
