@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>6-Channel FFT Spectrogram</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+        text-align: center;
+      }
+
+      h1 {
+        margin-bottom: 20px;
+      }
+
+      .controls {
+        margin-bottom: 20px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 10px;
+      }
+
+      button {
+        padding: 10px 20px;
+        font-size: 16px;
+        cursor: pointer;
+        background-color: #4caf50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+      }
+
+      button:hover {
+        background-color: #45a049;
+      }
+
+      button:disabled {
+        background-color: #cccccc;
+        cursor: not-allowed;
+      }
+
+      label {
+        margin-left: 15px;
+      }
+
+      select {
+        padding: 8px;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        grid-gap: 10px;
+        margin-bottom: 20px;
+      }
+
+      .channel {
+        position: relative;
+      }
+
+      canvas {
+        border: 1px solid #ddd;
+        width: 100%;
+        height: 150px;
+        box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
+      }
+
+      .channel-label {
+        position: absolute;
+        top: 5px;
+        left: 5px;
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 2px 5px;
+        border-radius: 3px;
+        font-size: 12px;
+      }
+
+      .error {
+        color: red;
+        margin: 20px 0;
+      }
+
+      .status {
+        font-style: italic;
+        margin: 10px 0;
+        color: #666;
+      }
+
+      .data-display {
+        font-family: monospace;
+        padding: 10px;
+        background-color: #f5f5f5;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        margin-bottom: 20px;
+        text-align: left;
+        height: 60px;
+        overflow-y: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>6-Channel FFT Spectrogram</h1>
+
+    <div class="controls">
+      <button id="connectBtn">Connect to Serial Port</button>
+      <button id="disconnectBtn" disabled>Disconnect</button>
+      <label for="sampleRate">Sample Rate (Hz):</label>
+      <select id="sampleRate">
+        <option value="10">10</option>
+        <option value="50">50</option>
+        <option value="100" selected>100</option>
+        <option value="200">200</option>
+        <option value="500">500</option>
+        <option value="1000">1000</option>
+        <option value="1250">1250</option>
+      </select>
+    </div>
+
+    <div id="status" class="status">Not connected</div>
+    <div id="dataDisplay" class="data-display">Waiting for data...</div>
+
+    <div class="grid">
+      <div class="channel">
+        <canvas id="channel0"></canvas>
+        <div class="channel-label">Channel 1</div>
+      </div>
+      <div class="channel">
+        <canvas id="channel1"></canvas>
+        <div class="channel-label">Channel 2</div>
+      </div>
+      <div class="channel">
+        <canvas id="channel2"></canvas>
+        <div class="channel-label">Channel 3</div>
+      </div>
+      <div class="channel">
+        <canvas id="channel3"></canvas>
+        <div class="channel-label">Channel 4</div>
+      </div>
+      <div class="channel">
+        <canvas id="channel4"></canvas>
+        <div class="channel-label">Channel 5</div>
+      </div>
+      <div class="channel">
+        <canvas id="channel5"></canvas>
+        <div class="channel-label">Channel 6</div>
+      </div>
+    </div>
+
+    <div id="error" class="error"></div>
+
+    <script>
+      // Get UI elements
+      const connectBtn = document.getElementById("connectBtn");
+      const disconnectBtn = document.getElementById("disconnectBtn");
+      const errorDiv = document.getElementById("error");
+      const statusDiv = document.getElementById("status");
+      const dataDisplay = document.getElementById("dataDisplay");
+      const sampleRateSelect = document.getElementById("sampleRate");
+
+      // Serial port variables
+      let port;
+      let reader;
+      let readLoopRunning = false;
+
+      // Buffer for incoming data
+      let dataBuffer = "";
+
+      // FFT size (power of 2, more points = better frequency resolution)
+      const FFT_SIZE = 256;
+
+      // Sampling rate in Hz (can be changed by the user)
+      let sampleRate = parseInt(sampleRateSelect.value);
+
+      // FFT arrays for each channel
+      const channelBuffers = Array(6)
+        .fill()
+        .map(() => new Array(FFT_SIZE).fill(0));
+      const channelBufferIndexes = Array(6).fill(0);
+
+      // Create audio context for FFT operations
+      const audioContext = new (window.AudioContext ||
+        window.webkitAudioContext)();
+
+      // Spectrogram history (each array will hold multiple FFT results)
+      const spectrogramHistory = Array(6)
+        .fill()
+        .map(() => []);
+      const MAX_HISTORY_COLUMNS = 100;
+
+      // Canvas elements for each channel
+      const canvases = Array.from({ length: 6 }, (_, i) => {
+        return {
+          element: document.getElementById(`channel${i}`),
+          ctx: document.getElementById(`channel${i}`).getContext("2d"),
+        };
+      });
+
+      // Initialize all canvases
+      canvases.forEach((canvas) => {
+        canvas.ctx.fillStyle = "black";
+        canvas.ctx.fillRect(0, 0, canvas.element.width, canvas.element.height);
+      });
+
+      // Check if Web Serial API is supported
+      if (!("serial" in navigator)) {
+        errorDiv.textContent =
+          "Web Serial API is not supported in your browser. Try Chrome or Edge.";
+        connectBtn.disabled = true;
+      }
+
+      // Create a Hann window function to reduce spectral leakage
+      function createWindow(size) {
+        const window = new Float32Array(size);
+        for (let i = 0; i < size; i++) {
+          window[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (size - 1)));
+        }
+        return window;
+      }
+
+      // Window function for FFT
+      const hannWindow = createWindow(FFT_SIZE);
+
+      // Color function to map frequency values to color (viridis-like colormap)
+      function getColor(value) {
+        // Normalize value between 0-1 (value expected to be 0-255)
+        const normalizedValue = Math.min(Math.max(value / 255, 0), 1);
+
+        // Viridis-inspired colors
+        if (normalizedValue < 0.25) {
+          // Dark blue to purple
+          return `rgb(68,1,84)`;
+        } else if (normalizedValue < 0.5) {
+          // Purple to blue
+          return `rgb(59,82,139)`;
+        } else if (normalizedValue < 0.75) {
+          // Blue to green
+          return `rgb(33,144,141)`;
+        } else {
+          // Green to yellow
+          return `rgb(253,231,37)`;
+        }
+      }
+
+      // Connect to serial port
+      async function connectToSerialPort() {
+        try {
+          // Request port access
+          port = await navigator.serial.requestPort();
+          await port.open({ baudRate: 9600 });
+
+          statusDiv.textContent = "Connected to serial port";
+          connectBtn.disabled = true;
+          disconnectBtn.disabled = false;
+          errorDiv.textContent = "";
+
+          // Reset buffers and history
+          resetChannelData();
+
+          // Begin reading
+          reader = port.readable.getReader();
+          readLoopRunning = true;
+          readSerialData();
+        } catch (error) {
+          errorDiv.textContent = `Error connecting to serial port: ${error.message}`;
+          console.error("Serial connection error:", error);
+        }
+      }
+
+      // Reset all channel data
+      function resetChannelData() {
+        // Reset channel buffers and indexes
+        channelBuffers.forEach((buffer, i) => {
+          channelBuffers[i] = new Array(FFT_SIZE).fill(0);
+          channelBufferIndexes[i] = 0;
+        });
+
+        // Reset spectrogram history
+        spectrogramHistory.forEach((history, i) => {
+          spectrogramHistory[i] = [];
+        });
+      }
+
+      // Disconnect from serial port
+      async function disconnectFromSerialPort() {
+        if (reader) {
+          readLoopRunning = false;
+          await reader.cancel();
+          reader = null;
+        }
+
+        if (port) {
+          await port.close();
+          port = null;
+        }
+
+        statusDiv.textContent = "Disconnected";
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
+      }
+
+      // Read data from serial port
+      async function readSerialData() {
+        while (port && readLoopRunning) {
+          try {
+            const { value, done } = await reader.read();
+
+            if (done) {
+              // Reader has been canceled
+              break;
+            }
+
+            // Convert the received bytes to a string
+            const textDecoder = new TextDecoder();
+            const text = textDecoder.decode(value);
+
+            // Add to buffer and process
+            dataBuffer += text;
+            processBuffer();
+          } catch (error) {
+            errorDiv.textContent = `Error reading from serial port: ${error.message}`;
+            break;
+          }
+        }
+
+        // Release the lock
+        if (reader) {
+          reader.releaseLock();
+        }
+      }
+
+      // Process the data buffer looking for complete readings
+      function processBuffer() {
+        // Look for newline characters which would separate readings
+        const lines = dataBuffer.split("\n");
+
+        // If we have more than one line, we can process all but the last one
+        // (which might be incomplete)
+        if (lines.length > 1) {
+          const completeLines = lines.slice(0, -1);
+          dataBuffer = lines[lines.length - 1];
+
+          completeLines.forEach((line) => {
+            processDataLine(line.trim());
+          });
+        }
+      }
+
+      // Process a line of data in "XXX YYY ZZZ AAA BBB CCC" format
+      function processDataLine(line) {
+        // Update data display
+        dataDisplay.textContent = line;
+
+        // Split the line by spaces and convert to numbers
+        const values = line.split(/\s+/).map((val) => parseInt(val.trim(), 10));
+
+        // Check if we have exactly 6 valid numbers
+        if (values.length === 6 && values.every((val) => !isNaN(val))) {
+          // Add values to channel buffers
+          values.forEach((value, channelIndex) => {
+            updateChannelData(channelIndex, value);
+          });
+        }
+      }
+
+      // Update a channel with a new data point and perform FFT if buffer is full
+      function updateChannelData(channelIndex, value) {
+        const bufferIndex = channelBufferIndexes[channelIndex];
+
+        // Add value to the buffer
+        channelBuffers[channelIndex][bufferIndex] = value;
+
+        // Increment buffer index
+        channelBufferIndexes[channelIndex] = (bufferIndex + 1) % FFT_SIZE;
+
+        // If we've filled the buffer, perform FFT
+        if (channelBufferIndexes[channelIndex] === 0) {
+          performFFT(channelIndex);
+        }
+      }
+
+      // Perform FFT on a channel buffer
+      function performFFT(channelIndex) {
+        // Get buffer
+        const buffer = channelBuffers[channelIndex];
+
+        // Create a new array for FFT data
+        const fftResult = new Array(FFT_SIZE / 2).fill(0);
+
+        // Compute FFT manually with simple DFT implementation
+        for (let k = 0; k < FFT_SIZE / 2; k++) {
+          let realPart = 0;
+          let imagPart = 0;
+
+          for (let n = 0; n < FFT_SIZE; n++) {
+            // Apply window function to reduce spectral leakage
+            const windowed = buffer[n] * hannWindow[n];
+            const angle = (-2 * Math.PI * k * n) / FFT_SIZE;
+            realPart += windowed * Math.cos(angle);
+            imagPart += windowed * Math.sin(angle);
+          }
+
+          // Calculate magnitude and scale to 0-255 range for visualization
+          const magnitude =
+            Math.sqrt(realPart * realPart + imagPart * imagPart) / FFT_SIZE;
+          fftResult[k] = Math.min(255, Math.floor(magnitude));
+        }
+        console.log(fftResult);
+        // Add to spectrogram history
+        spectrogramHistory[channelIndex].push(fftResult);
+
+        // Limit history length
+        if (spectrogramHistory[channelIndex].length > MAX_HISTORY_COLUMNS) {
+          spectrogramHistory[channelIndex].shift();
+        }
+
+        // Update the spectrogram
+        drawSpectrogram(channelIndex);
+      }
+
+      // Draw the spectrogram for a channel
+      function drawSpectrogram(channelIndex) {
+        const canvas = canvases[channelIndex];
+        const ctx = canvas.ctx;
+        const history = spectrogramHistory[channelIndex];
+        const width = canvas.element.width;
+        const height = canvas.element.height;
+
+        // Clear canvas
+        ctx.fillStyle = "black";
+        ctx.fillRect(0, 0, width, height);
+
+        if (history.length === 0) return;
+
+        // Calculate column width
+        const colWidth = width / MAX_HISTORY_COLUMNS;
+
+        // Draw the spectrogram
+        history.forEach((fftResult, timeIndex) => {
+          const fftHeight = fftResult.length;
+          const binHeight = height / fftHeight;
+
+          for (let freqIndex = 0; freqIndex < fftHeight; freqIndex++) {
+            const value = fftResult[freqIndex];
+            if (value > 0) {
+              // Use inverted y-axis so low frequencies are at the bottom
+              const y = height - (freqIndex + 1) * binHeight;
+
+              ctx.fillStyle = getColor(value);
+              ctx.fillRect(
+                timeIndex * colWidth,
+                y,
+                colWidth,
+                binHeight + 1 // +1 to avoid gaps
+              );
+            }
+          }
+        });
+
+        // Add frequency scale
+        ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+        ctx.fillRect(width - 40, 0, 40, height);
+
+        ctx.fillStyle = "white";
+        ctx.font = "10px Arial";
+        ctx.textAlign = "right";
+
+        // Calculate Nyquist frequency (half the sample rate)
+        const nyquist = sampleRate / 2;
+
+        // Draw frequency labels
+        const numLabels = 5;
+        for (let i = 0; i <= numLabels; i++) {
+          const frequency = (nyquist / numLabels) * i;
+          const y = height - (height / numLabels) * i;
+
+          let label;
+          if (frequency >= 1000) {
+            label = (frequency / 1000).toFixed(1) + "kHz";
+          } else {
+            label = frequency.toFixed(0) + "Hz";
+          }
+
+          ctx.fillText(label, width - 5, y + 3);
+        }
+      }
+
+      // Initialize the spectrograms with empty data
+      function initializeSpectrograms() {
+        // Reset data
+        resetChannelData();
+
+        // Redraw empty spectrograms
+        for (let i = 0; i < 6; i++) {
+          drawSpectrogram(i);
+        }
+      }
+
+      // Set up event listeners
+      connectBtn.addEventListener("click", connectToSerialPort);
+      disconnectBtn.addEventListener("click", disconnectFromSerialPort);
+      sampleRateSelect.addEventListener("change", () => {
+        sampleRate = parseInt(sampleRateSelect.value);
+        initializeSpectrograms();
+      });
+
+      // Initialize spectrograms on page load
+      initializeSpectrograms();
+
+      // Simulate incoming data for testing (uncomment for testing without actual serial connection)
+      /*
+      let testInterval;
+      let testStartTime = Date.now();
+
+      connectBtn.addEventListener("click", () => {
+        // For testing without actual serial connection
+        connectBtn.disabled = true;
+        disconnectBtn.disabled = false;
+        statusDiv.textContent = "Connected (SIMULATED)";
+        testStartTime = Date.now();
+
+        // Create test data simulators for each channel
+        const simulators = [
+          // Channel 1: Pure 5Hz sine wave
+          (t) => Math.sin(2 * Math.PI * 5 * t) * 100 + 100,
+          // Channel 2: Pure 10Hz sine wave
+          (t) => Math.sin(2 * Math.PI * 10 * t) * 100 + 100,
+          // Channel 3: Mix of 7Hz and 15Hz
+          (t) =>
+            Math.sin(2 * Math.PI * 7 * t) * 80 +
+            Math.sin(2 * Math.PI * 15 * t) * 50 +
+            200,
+          // Channel 4: Chirp (frequency sweep)
+          (t) => Math.sin(2 * Math.PI * (5 + t * 10) * t) * 100 + 150,
+          // Channel 5: Square wave at 3Hz
+          (t) => (Math.sin(2 * Math.PI * 3 * t) > 0 ? 200 : 50),
+          // Channel 6: White noise with varying amplitude
+          (t) => (Math.random() - 0.5) * 300 + 150,
+        ];
+
+        testInterval = setInterval(() => {
+          const t = (Date.now() - testStartTime) / 1000; // Time in seconds
+
+          // Generate simulated data
+          const values = simulators.map((sim) => Math.floor(sim(t)));
+          const line = values.join(" ");
+          processDataLine(line);
+        }, 1000 / sampleRate); // Use the selected sample rate
+      });
+
+      disconnectBtn.addEventListener("click", () => {
+        clearInterval(testInterval);
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
+        statusDiv.textContent = "Disconnected";
+      });
+      */
+    </script>
+  </body>
+</html>

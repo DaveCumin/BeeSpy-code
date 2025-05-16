@@ -6,7 +6,7 @@
 #include <Wire.h>
 #include <Protocentral_FDC1004.h>
 #include "SparkFunHTU21D.h"
-#include "ccs811.h"
+#include "Adafruit_CCS811.h"
 #include "SdFat.h"
 #include "RTClib.h"
 
@@ -38,8 +38,8 @@ float temp, humd;
 bool foundHTU21D = false; // so can skip if there is an error with only this sensor
 
 // CCS811 eCO2 and TVOC sensor initialization
-CCS811 ccs811;
-uint16_t eco2, etvoc, errstat, raw;
+Adafruit_CCS811 ccs811;
+uint16_t eco2, etvoc, ccstemp;
 bool foundCO2 = false; // so can skip if there is an error with only this sensor
 
 // SD stuff
@@ -77,36 +77,6 @@ const unsigned long sensorReadDuration = 300000; // 5 minutes in milliseconds
 // Timer for measuring capacitance every 250ms
 unsigned long lastCapacitanceReadTime = 0;
 const unsigned long capacitanceReadDuration = 250; // 250ms
-
-// RTC functions
-char getDateTime()
-{
-
-    DateTime now = rtc.now();
-    char binName[] = "2024_01_01_23_59_59";
-
-    binName[0] = (now.year() / 1000) % 10 + '0'; // To get 1st digit from year()
-    binName[1] = (now.year() / 100) % 10 + '0';  // To get 2nd digit from year()
-    binName[2] = (now.year() / 10) % 10 + '0';   // To get 3rd digit from year()
-    binName[3] = now.year() % 10 + '0';          // To get 4th digit from year()
-    // binName[4] = '_';
-    binName[5] = now.month() / 10 + '0'; // To get 1st digit from month()
-    binName[6] = now.month() % 10 + '0'; // To get 2nd digit from month()
-    // binName[7] = '_';
-    binName[8] = now.day() / 10 + '0'; // To get 1st digit from day()
-    binName[9] = now.day() % 10 + '0'; // To get 2nd digit from day()
-    // binName[10] = '_';
-    binName[11] = now.hour() / 10 + '0'; // To get 1st digit from hour()
-    binName[12] = now.hour() % 10 + '0'; // To get 2nd digit from hour()
-    // binName[13] = '_';
-    binName[14] = now.minute() / 10 + '0'; // To get 1nd digit from minute()
-    binName[15] = now.minute() % 10 + '0'; // To get 2nd digit from minute()
-    // binName[16] = '_';
-    binName[17] = now.second() / 10 + '0'; // To get 1nd digit from second()
-    binName[18] = now.second() % 10 + '0'; // To get 2nd digit from second()
-
-    return binName;
-}
 
 // Function to read capacitance value from the FDC1004 sensor
 long readCapacitance(long &capacitance)
@@ -160,34 +130,16 @@ void readTemperatureAndHumidity(float &temp, float &humd)
 }
 
 // Function to read eCO2 and TVOC values from the CCS811 sensor
-bool readCO2TVOC(uint16_t &eco2, uint16_t &etvoc)
+void readCO2TVOC(uint16_t &eco2, uint16_t &etvoc, uint16_t &ccstemp)
 {
-    ccs811.read(&eco2, &etvoc, &errstat, &raw);
-
-    // Check error status and return true if no errors
-    if (errstat == CCS811_ERRSTAT_OK)
+    if (ccs811.available())
     {
-        return true; // Successfully read data
-    }
-    else
-    {
-        // Handle errors
-        if (errstat == CCS811_ERRSTAT_OK_NODATA)
+        if (!ccs811.readData())
         {
-            Serial.println("CCS811: waiting for new data");
+            ccstemp = ccs811.calculateTemperature();
+            etvoc = ccs811.getTVOC();
+            eco2 = ccs811.geteCO2();
         }
-        else if (errstat & CCS811_ERRSTAT_I2CFAIL)
-        {
-            Serial.println("CCS811: I2C error");
-        }
-        else
-        {
-            Serial.print("CCS811: errstat=");
-            Serial.print(errstat, HEX);
-            Serial.print("=");
-            Serial.println(ccs811.errstat_str(errstat));
-        }
-        return false; // Failed to read data
     }
 }
 
@@ -248,16 +200,10 @@ void setup()
     }
     else
     {
-        // Start measuring (1 second mode) for CCS811
-        if (!ccs811.start(CCS811_MODE_1SEC))
-        {
-            Serial.println("setup: CCS811 start FAILED");
-            foundCO2 = false;
-        }
-        else
-        {
-            foundCO2 = true;
-        }
+        // calibrate temp sensor
+        float temp = ccs811.calculateTemperature();
+        ccs811.setTempOffset(temp - 25.0);
+        foundCO2 = true;
     }
 
     // Initialize SD card
@@ -351,7 +297,7 @@ void loop()
         if (foundCO2)
         {
             unsigned long co2timems = currentMillis;
-            readCO2TVOC(eco2, etvoc); // Read eCO2 and TVOC data
+            readCO2TVOC(eco2, etvoc, ccstemp); // Read eCO2 and TVOC data
 
             // Log eCO2 and TVOC data to SD card
             String eco2Line = String(co2timems) + "," +
@@ -369,9 +315,19 @@ void loop()
             {
                 dataFile.println(tvocLine); // Write data to the file
             }
+
+            String ctempLine = String(co2timems) + "," +
+                               "CTemp" + "," +
+                               String(ccstemp);
+            if (dataFile)
+            {
+                dataFile.println(ccstemp); // Write data to the file
+            }
+
             // Print data to the serial monitor
             Serial.println(eco2Line);
             Serial.println(tvocLine);
+            Serial.println(ctempLine);
         }
     }
 }
