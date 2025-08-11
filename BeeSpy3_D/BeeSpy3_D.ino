@@ -32,7 +32,7 @@
 #include "MinimumSerial.h"
 MinimumSerial MinSerial;
 #define Serial MinSerial
-#endif  // __AVR_ATmega328P__
+#endif // __AVR_ATmega328P__
 //------------------------------------------------------------------------------
 // This example was designed for exFAT but will support FAT16/FAT32.
 //
@@ -50,9 +50,9 @@ MinimumSerial MinSerial;
 // 2 - DS3231
 // 3 - PCF8523
 #define USE_RTC 1
-#if USE_RTC
+// #if USE_RTC
 #include "RTClib.h"
-#endif  // USE_RTC
+// #endif  // USE_RTC
 //------------------------------------------------------------------------------
 // Pin definitions.
 //
@@ -69,7 +69,7 @@ const uint8_t SD_CS_PIN = 53;
 const uint8_t PIN_LIST[] = {0, 1, 2, 3, 4, 5};
 //------------------------------------------------------------------------------
 // Sample rate in samples per second.
-const float SAMPLE_RATE = 5000;  // Must be 0.25 or greater.
+const float SAMPLE_RATE = 5000; // Must be 0.25 or greater.
 
 // The interval between samples in seconds, SAMPLE_INTERVAL, may be set to a
 // constant instead of being calculated from SAMPLE_RATE.  SAMPLE_RATE is not
@@ -84,7 +84,7 @@ const float SAMPLE_INTERVAL = 1.0 / SAMPLE_RATE;
 //------------------------------------------------------------------------------
 // Reference voltage.  See the processor data-sheet for reference details.
 // uint8_t const ADC_REF = 0; // External Reference AREF pin.
-uint8_t const ADC_REF = (1 << REFS0);  // Vcc Reference.
+uint8_t const ADC_REF = (1 << REFS0); // Vcc Reference.
 // uint8_t const ADC_REF = (1 << REFS1);  // Internal 1.1 (only 644 1284P Mega)
 // uint8_t const ADC_REF = (1 << REFS1) | (1 << REFS0);  // Internal 1.1 or 2.56
 //------------------------------------------------------------------------------
@@ -93,7 +93,7 @@ uint8_t const ADC_REF = (1 << REFS0);  // Vcc Reference.
 // Maximum file size in bytes.
 // The program creates a contiguous file with MAX_FILE_SIZE_MiB bytes.
 // The file will be truncated if logging is stopped early.
-const uint32_t MAX_FILE_SIZE_MiB = 36;  // 100 MiB file.  36MB is 10 min
+const uint32_t MAX_FILE_SIZE_MiB = 36; // 100 MiB file.  36MB is 10 min
 
 // log file name.  Integer field before dot will be incremented.
 #define LOG_FILE_NAME "AvrAdc00.bin"
@@ -114,9 +114,9 @@ const size_t FIFO_SIZE_BYTES = 512;
 const size_t FIFO_SIZE_BYTES = 4 * 512;
 #elif RAMEND < 0X40FF
 const size_t FIFO_SIZE_BYTES = 12 * 512;
-#else   // RAMEND
+#else  // RAMEND
 const size_t FIFO_SIZE_BYTES = 16 * 512;
-#endif  // RAMEND
+#endif // RAMEND
 //------------------------------------------------------------------------------
 // ADC clock rate.
 // The ADC clock rate is normally calculated from the pin count and sample
@@ -157,9 +157,9 @@ const uint32_t MAX_FILE_SIZE = MAX_FILE_SIZE_MiB << 20;
 // Select fastest interface.
 #if ENABLE_DEDICATED_SPI
 #define SD_CONFIG SdSpiConfig(SD_CS_PIN, DEDICATED_SPI, SPI_CLOCK)
-#else  // ENABLE_DEDICATED_SPI
+#else // ENABLE_DEDICATED_SPI
 #define SD_CONFIG SdSpiConfig(SD_CS_PIN, SHARED_SPI, SPI_CLOCK)
-#endif  // ENABLE_DEDICATED_SPI
+#endif // ENABLE_DEDICATED_SPI
 
 #if SD_FAT_TYPE == 0
 SdFat sd;
@@ -173,9 +173,9 @@ typedef ExFile file_t;
 #elif SD_FAT_TYPE == 3
 SdFs sd;
 typedef FsFile file_t;
-#else  // SD_FAT_TYPE
+#else // SD_FAT_TYPE
 #error Invalid SD_FAT_TYPE
-#endif  // SD_FAT_TYPE
+#endif // SD_FAT_TYPE
 
 file_t binFile;
 file_t csvFile;
@@ -185,21 +185,20 @@ file_t csvFile;
 // TESTING
 unsigned long testms = 0;
 
-
 #if RECORD_EIGHT_BITS
 const size_t BLOCK_MAX_COUNT = PIN_COUNT * (DATA_DIM8 / PIN_COUNT);
 typedef block8_t block_t;
-#else   // RECORD_EIGHT_BITS
+#else  // RECORD_EIGHT_BITS
 const size_t BLOCK_MAX_COUNT = PIN_COUNT * (DATA_DIM16 / PIN_COUNT);
 typedef block16_t block_t;
-#endif  // RECORD_EIGHT_BITS
+#endif // RECORD_EIGHT_BITS
 
 // Size of FIFO in blocks.
 size_t const FIFO_DIM = FIFO_SIZE_BYTES / sizeof(block_t);
-block_t* fifoData;
-volatile size_t fifoCount = 0;  // volatile - shared, ISR and background.
-size_t fifoHead = 0;            // Only accessed by ISR during logging.
-size_t fifoTail = 0;            // Only accessed by writer during logging.
+block_t *fifoData;
+volatile size_t fifoCount = 0; // volatile - shared, ISR and background.
+size_t fifoHead = 0;           // Only accessed by ISR during logging.
+size_t fifoTail = 0;           // Only accessed by writer during logging.
 //==============================================================================
 // Interrupt Service Routines
 
@@ -207,7 +206,7 @@ size_t fifoTail = 0;            // Only accessed by writer during logging.
 volatile bool isrStop = false;
 
 // Pointer to current buffer.
-block_t* isrBuf = nullptr;
+block_t *isrBuf = nullptr;
 // overrun count
 uint16_t isrOver = 0;
 
@@ -223,21 +222,27 @@ volatile bool timerFlag = false;
 
 //------------------------------------------------------------------------------
 // ADC done interrupt.
-ISR(ADC_vect) {
+ISR(ADC_vect)
+{
   // Read ADC data.
 #if RECORD_EIGHT_BITS
   uint8_t d = ADCH;
-#else   // RECORD_EIGHT_BITS
+#else  // RECORD_EIGHT_BITS
   // This will access ADCL first.
   uint16_t d = ADC;
-#endif  // RECORD_EIGHT_BITS
+#endif // RECORD_EIGHT_BITS
 
-  if (!isrBuf) {
-    if (fifoCount < FIFO_DIM) {
+  if (!isrBuf)
+  {
+    if (fifoCount < FIFO_DIM)
+    {
       isrBuf = fifoData + fifoHead;
-    } else {
+    }
+    else
+    {
       // no buffers - count overrun
-      if (isrOver < 0XFFFF) {
+      if (isrOver < 0XFFFF)
+      {
         isrOver++;
       }
       // Avoid missed timer error.
@@ -246,26 +251,32 @@ ISR(ADC_vect) {
     }
   }
   // Start ADC for next pin
-  if (PIN_COUNT > 1) {
+  if (PIN_COUNT > 1)
+  {
     ADMUX = adcmux[adcindex];
     ADCSRB = adcsrb[adcindex];
     ADCSRA = adcsra[adcindex];
-    if (adcindex == 0) {
+    if (adcindex == 0)
+    {
       timerFlag = false;
     }
     adcindex = adcindex < (PIN_COUNT - 1) ? adcindex + 1 : 0;
-  } else {
+  }
+  else
+  {
     timerFlag = false;
   }
   // Store ADC data.
   isrBuf->data[isrBuf->count++] = d;
 
   // Check for buffer full.
-  if (isrBuf->count >= BLOCK_MAX_COUNT) {
+  if (isrBuf->count >= BLOCK_MAX_COUNT)
+  {
     fifoHead = fifoHead < (FIFO_DIM - 1) ? fifoHead + 1 : 0;
     fifoCount++;
     // Check for end logging.
-    if (isrStop) {
+    if (isrStop)
+    {
       adcStop();
       return;
     }
@@ -276,9 +287,11 @@ ISR(ADC_vect) {
 }
 //------------------------------------------------------------------------------
 // timer1 interrupt to clear OCF1B
-ISR(TIMER1_COMPB_vect) {
+ISR(TIMER1_COMPB_vect)
+{
   // Make sure ADC ISR responded to timer event.
-  if (timerFlag) {
+  if (timerFlag)
+  {
     timerError = true;
   }
   timerFlag = true;
@@ -289,9 +302,12 @@ ISR(TIMER1_COMPB_vect) {
 #define assert(e) ((e) ? (void)0 : error("assert: " #e))
 //------------------------------------------------------------------------------
 //
-void fatalBlink() {
-  while (true) {
-    if (ERROR_LED_PIN >= 0) {
+void fatalBlink()
+{
+  while (true)
+  {
+    if (ERROR_LED_PIN >= 0)
+    {
       digitalWrite(ERROR_LED_PIN, HIGH);
       delay(200);
       digitalWrite(ERROR_LED_PIN, LOW);
@@ -300,7 +316,8 @@ void fatalBlink() {
   }
 }
 //------------------------------------------------------------------------------
-void errorHalt() {
+void errorHalt()
+{
   // Print minimal error data.
   // sd.errorPrint(&Serial);
   // Print extended error info - uses extra bytes of flash.
@@ -311,7 +328,8 @@ void errorHalt() {
 }
 
 //------------------------------------------------------------------------------
-void printTime(DateTime timeIN){
+void printTime(DateTime timeIN)
+{
   Serial.print(F("The rtc time is "));
   Serial.print(timeIN.year(), DEC);
   Serial.print('/');
@@ -327,50 +345,53 @@ void printTime(DateTime timeIN){
   Serial.println();
 }
 //------------------------------------------------------------------------------
-void printUnusedStack() {
+void printUnusedStack()
+{
   Serial.print(F("\nUnused stack: "));
   Serial.println(UnusedStack());
 }
 
 //------------------------------------------------------------------------------
 // Function to stop the RTC (set CH bit to 1)
-void stopRTC() {
-  //Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
-  //Wire.write(0x00);              // Start at the seconds register (address 0x00)
-  //Wire.endTransmission();
-  
- // Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
-  //uint8_t seconds = Wire.read(); // Read the seconds register
-  
+void stopRTC()
+{
+  // Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
+  // Wire.write(0x00);              // Start at the seconds register (address 0x00)
+  // Wire.endTransmission();
+
+  // Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
+  // uint8_t seconds = Wire.read(); // Read the seconds register
+
   // Set the CH (Clock Halt) bit to 1 to stop the clock
-  //seconds |= 0x80;
+  // seconds |= 0x80;
 
   // Write the modified seconds back to stop the clock
-  //Wire.beginTransmission(0x68);
-  //Wire.write(0x00);              // Start at the seconds register
-  //Wire.write(seconds);           // Write the modified seconds register (CH bit set)
-  //Wire.endTransmission();
+  // Wire.beginTransmission(0x68);
+  // Wire.write(0x00);              // Start at the seconds register
+  // Wire.write(seconds);           // Write the modified seconds register (CH bit set)
+  // Wire.endTransmission();
 
   Serial.println("RTC stopped!");
 }
 
 // Function to start the RTC (clear CH bit to 0)
-void startRTC() {
-  //Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
-  //Wire.write(0x00);              // Start at the seconds register (address 0x00)
-  //Wire.endTransmission();
-  
-  //Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
-  //uint8_t seconds = Wire.read(); // Read the seconds register
-  
+void startRTC()
+{
+  // Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
+  // Wire.write(0x00);              // Start at the seconds register (address 0x00)
+  // Wire.endTransmission();
+
+  // Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
+  // uint8_t seconds = Wire.read(); // Read the seconds register
+
   // Clear the CH (Clock Halt) bit to 0 to start the clock
-  //seconds &= 0x7F;
+  // seconds &= 0x7F;
 
   // Write the modified seconds back to start the clock
-  //Wire.beginTransmission(0x68);
-  //Wire.write(0x00);              // Start at the seconds register
-  //Wire.write(seconds);           // Write the modified seconds register (CH bit cleared)
-  //Wire.endTransmission();
+  // Wire.beginTransmission(0x68);
+  // Wire.write(0x00);              // Start at the seconds register
+  // Wire.write(seconds);           // Write the modified seconds register (CH bit cleared)
+  // Wire.endTransmission();
 
   Serial.println("RTC started!");
 }
@@ -382,11 +403,12 @@ RTC_DS1307 rtc;
 RTC_DS3231 rtc;
 #elif USE_RTC == 3
 RTC_PCF8523 rtc;
-#else  // USE_RTC == type
+#else // USE_RTC == type
 #error USE_RTC type not implemented.
-#endif  // USE_RTC == type
+#endif // USE_RTC == type
 // Call back for file timestamps.  Only called for file create and sync().
-void dateTime(uint16_t* date, uint16_t* time, uint8_t* ms10) {
+void dateTime(uint16_t *date, uint16_t *time, uint8_t *ms10)
+{
   DateTime now = rtc.now();
 
   // Return date using FS_DATE macro to format fields.
@@ -398,7 +420,7 @@ void dateTime(uint16_t* date, uint16_t* time, uint8_t* ms10) {
   // Return low time bits in units of 10 ms.
   *ms10 = now.second() & 1 ? 100 : 0;
 }
-#endif  // USE_RTC
+#endif // USE_RTC
 //==============================================================================
 #if ADPS0 != 0 || ADPS1 != 1 || ADPS2 != 2
 #error unexpected ADC prescaler bits
@@ -407,31 +429,37 @@ void dateTime(uint16_t* date, uint16_t* time, uint8_t* ms10) {
 inline bool adcActive() { return (1 << ADIE) & ADCSRA; }
 //------------------------------------------------------------------------------
 // initialize ADC and timer1
-void adcInit(metadata_t* meta) {
-  uint8_t adps;  // prescaler bits for ADCSRA
+void adcInit(metadata_t *meta)
+{
+  uint8_t adps; // prescaler bits for ADCSRA
   uint32_t ticks =
-      F_CPU * SAMPLE_INTERVAL + 0.5;  // Sample interval cpu cycles.
+      F_CPU * SAMPLE_INTERVAL + 0.5; // Sample interval cpu cycles.
 
-  if (ADC_REF & ~((1 << REFS0) | (1 << REFS1))) {
+  if (ADC_REF & ~((1 << REFS0) | (1 << REFS1)))
+  {
     error("Invalid ADC reference");
   }
 #ifdef ADC_PRESCALER
-  if (ADC_PRESCALER > 7 || ADC_PRESCALER < 2) {
+  if (ADC_PRESCALER > 7 || ADC_PRESCALER < 2)
+  {
     error("Invalid ADC prescaler");
   }
   adps = ADC_PRESCALER;
-#else   // ADC_PRESCALER
+#else  // ADC_PRESCALER
   // Allow extra cpu cycles to change ADC settings if more than one pin.
   int32_t adcCycles = (ticks - ISR_TIMER0) / PIN_COUNT - ISR_SETUP_ADC;
 
-  for (adps = 7; adps > 0; adps--) {
-    if (adcCycles >= (MIN_ADC_CYCLES << adps)) {
+  for (adps = 7; adps > 0; adps--)
+  {
+    if (adcCycles >= (MIN_ADC_CYCLES << adps))
+    {
       break;
     }
   }
-#endif  // ADC_PRESCALER
+#endif // ADC_PRESCALER
   meta->adcFrequency = F_CPU >> adps;
-  if (meta->adcFrequency > (RECORD_EIGHT_BITS ? 2000000 : 1000000)) {
+  if (meta->adcFrequency > (RECORD_EIGHT_BITS ? 2000000 : 1000000))
+  {
     error("Sample Rate Too High");
   }
 #if ROUND_SAMPLE_INTERVAL
@@ -439,34 +467,39 @@ void adcInit(metadata_t* meta) {
   ticks += 1 << (adps - 1);
   ticks >>= adps;
   ticks <<= adps;
-#endif  // ROUND_SAMPLE_INTERVAL
+#endif // ROUND_SAMPLE_INTERVAL
 
-  if (PIN_COUNT > BLOCK_MAX_COUNT || PIN_COUNT > PIN_NUM_DIM) {
+  if (PIN_COUNT > BLOCK_MAX_COUNT || PIN_COUNT > PIN_NUM_DIM)
+  {
     error("Too many pins");
   }
   meta->pinCount = PIN_COUNT;
   meta->recordEightBits = RECORD_EIGHT_BITS;
 
-  for (int i = 0; i < PIN_COUNT; i++) {
+  for (int i = 0; i < PIN_COUNT; i++)
+  {
     uint8_t pin = PIN_LIST[i];
-    if (pin >= NUM_ANALOG_INPUTS) {
+    if (pin >= NUM_ANALOG_INPUTS)
+    {
       error("Invalid Analog pin number");
     }
     meta->pinNumber[i] = pin;
 
     // Set ADC reference and low three bits of analog pin number.
     adcmux[i] = (pin & 7) | ADC_REF;
-    if (RECORD_EIGHT_BITS) {
+    if (RECORD_EIGHT_BITS)
+    {
       adcmux[i] |= 1 << ADLAR;
     }
 
     // If this is the first pin, trigger on timer/counter 1 compare match B.
     adcsrb[i] = i == 0 ? (1 << ADTS2) | (1 << ADTS0) : 0;
 #ifdef MUX5
-    if (pin > 7) {
+    if (pin > 7)
+    {
       adcsrb[i] |= (1 << MUX5);
     }
-#endif  // MUX5
+#endif // MUX5
     adcsra[i] = (1 << ADEN) | (1 << ADIE) | adps;
     // First pin triggers on timer 1 compare match B rest are free running.
     adcsra[i] |= i == 0 ? 1 << ADATE : 1 << ADSC;
@@ -475,27 +508,38 @@ void adcInit(metadata_t* meta) {
   // Setup timer1
   TCCR1A = 0;
   uint8_t tshift;
-  if (ticks < 0X10000) {
+  if (ticks < 0X10000)
+  {
     // no prescale, CTC mode
     TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS10);
     tshift = 0;
-  } else if (ticks < 0X10000 * 8) {
+  }
+  else if (ticks < 0X10000 * 8)
+  {
     // prescale 8, CTC mode
     TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS11);
     tshift = 3;
-  } else if (ticks < 0X10000 * 64) {
+  }
+  else if (ticks < 0X10000 * 64)
+  {
     // prescale 64, CTC mode
     TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS11) | (1 << CS10);
     tshift = 6;
-  } else if (ticks < 0X10000 * 256) {
+  }
+  else if (ticks < 0X10000 * 256)
+  {
     // prescale 256, CTC mode
     TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS12);
     tshift = 8;
-  } else if (ticks < 0X10000 * 1024) {
+  }
+  else if (ticks < 0X10000 * 1024)
+  {
     // prescale 1024, CTC mode
     TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS12) | (1 << CS10);
     tshift = 10;
-  } else {
+  }
+  else
+  {
     error("Sample Rate Too Slow");
   }
   // divide by prescaler
@@ -513,16 +557,14 @@ void adcInit(metadata_t* meta) {
   meta->cpuFrequency = F_CPU;
   float sampleRate = (float)meta->cpuFrequency / meta->sampleInterval;
   Serial.print(F("Sample pins:"));
-  for (uint8_t i = 0; i < meta->pinCount; i++) {
+  for (uint8_t i = 0; i < meta->pinCount; i++)
+  {
     Serial.print(' ');
     Serial.print(meta->pinNumber[i], DEC);
   }
   Serial.println();
   Serial.println();
 
-
-  
-  
   Serial.print(F("ADC bits: "));
   Serial.println(meta->recordEightBits ? 8 : 10);
   Serial.print(F("ADC clock kHz: "));
@@ -534,7 +576,8 @@ void adcInit(metadata_t* meta) {
 }
 //------------------------------------------------------------------------------
 // enable ADC and timer1 interrupts
-void adcStart() {
+void adcStart()
+{
   // initialize ISR
   adcindex = 1;
   isrBuf = nullptr;
@@ -557,16 +600,18 @@ void adcStart() {
   TIMSK1 = 1 << OCIE1B;
 }
 //------------------------------------------------------------------------------
-inline void adcStop() {
+inline void adcStop()
+{
   TIMSK1 = 0;
   ADCSRA = 0;
 }
 //------------------------------------------------------------------------------
 // Convert binary file to csv file.
-void binaryToCsv() {
+void binaryToCsv()
+{
   uint8_t lastPct = 0;
-  block_t* pd;
-  metadata_t* pm;
+  block_t *pd;
+  metadata_t *pm;
   uint32_t t0 = millis();
   // Use fast buffered print class.
   BufferedPrint<file_t, 64> bp(&csvFile);
@@ -576,20 +621,25 @@ void binaryToCsv() {
   binFile.rewind();
   uint32_t tPct = millis();
   bool doMeta = true;
-  while (!Serial.available()) {
+  while (!Serial.available())
+  {
     pd = binBuffer;
     int nb = binFile.read(binBuffer, sizeof(binBuffer));
-    if (nb < 0) {
+    if (nb < 0)
+    {
       error("read binFile failed");
     }
     size_t nd = nb / sizeof(block_t);
-    if (nd < 1) {
+    if (nd < 1)
+    {
       break;
     }
-    if (doMeta) {
+    if (doMeta)
+    {
       doMeta = false;
-      pm = (metadata_t*)pd++;
-      if (PIN_COUNT != pm->pinCount) {
+      pm = (metadata_t *)pd++;
+      if (PIN_COUNT != pm->pinCount)
+      {
         error("Invalid pinCount");
       }
       bp.print(F("Interval,"));
@@ -597,35 +647,45 @@ void binaryToCsv() {
           1.0e6 * pm->sampleInterval / (float)pm->cpuFrequency;
       bp.print(intervalMicros, 4);
       bp.println(F(",usec"));
-      for (uint8_t i = 0; i < PIN_COUNT; i++) {
-        if (i) {
+      for (uint8_t i = 0; i < PIN_COUNT; i++)
+      {
+        if (i)
+        {
           bp.print(',');
         }
         bp.print(F("pin"));
         bp.print(pm->pinNumber[i]);
       }
       bp.println();
-      if (nd-- == 1) {
+      if (nd-- == 1)
+      {
         break;
       }
     }
-    for (size_t i = 0; i < nd; i++, pd++) {
-      if (pd->overrun) {
+    for (size_t i = 0; i < nd; i++, pd++)
+    {
+      if (pd->overrun)
+      {
         bp.print(F("OVERRUN,"));
         bp.println(pd->overrun);
       }
-      for (size_t j = 0; j < pd->count; j += PIN_COUNT) {
-        for (size_t i = 0; i < PIN_COUNT; i++) {
+      for (size_t j = 0; j < pd->count; j += PIN_COUNT)
+      {
+        for (size_t i = 0; i < PIN_COUNT; i++)
+        {
           if (!bp.printField(pd->data[i + j],
-                             i == (PIN_COUNT - 1) ? '\n' : ',')) {
+                             i == (PIN_COUNT - 1) ? '\n' : ','))
+          {
             error("printField failed");
           }
         }
       }
     }
-    if ((millis() - tPct) > 1000) {
+    if ((millis() - tPct) > 1000)
+    {
       uint8_t pct = binFile.curPosition() / (binFile.fileSize() / 100);
-      if (pct != lastPct) {
+      if (pct != lastPct)
+      {
         tPct = millis();
         lastPct = pct;
         Serial.print(pct, DEC);
@@ -633,7 +693,8 @@ void binaryToCsv() {
       }
     }
   }
-  if (!bp.sync() || !csvFile.close()) {
+  if (!bp.sync() || !csvFile.close())
+  {
     error("close csvFile failed");
   }
   Serial.print(F("Done: "));
@@ -641,78 +702,91 @@ void binaryToCsv() {
   Serial.println(F(" Seconds"));
 }
 //------------------------------------------------------------------------------
-void clearSerialInput() {
+void clearSerialInput()
+{
   uint32_t m = micros();
-  do {
-    if (Serial.read() >= 0) {
+  do
+  {
+    if (Serial.read() >= 0)
+    {
       m = micros();
     }
   } while (micros() - m < 10000);
 }
 //------------------------------------------------------------------------------
-void createBinFile() {
+void createBinFile()
+{
   binFile.close();
-  
-  
- //DateTime time = rtc.now();
-// string binName[ ] =("DateTime::TIMESTAMP_FULL:\t")+time.timestamp(DateTime::TIMESTAMP_FULL+'.bin');
-// char binName[50];
-//snprintf(binName, 50, "%d-%d-%d-%d-%d.bin",("DateTime::TIMESTAMP_FULL:\t")+time.timestamp(DateTime::TIMESTAMP_FULL+00));
 
-DateTime now = rtc.now();
-char binName[24] = {0};
-snprintf(binName, sizeof(binName), "%04d_%02d_%02d_%02d_%02d_%02d.bin",
-         now.year(), now.month(), now.day(),
-         now.hour(), now.minute(), now.second());
+  // DateTime time = rtc.now();
+  // string binName[ ] =("DateTime::TIMESTAMP_FULL:\t")+time.timestamp(DateTime::TIMESTAMP_FULL+'.bin');
+  // char binName[50];
+  // snprintf(binName, 50, "%d-%d-%d-%d-%d.bin",("DateTime::TIMESTAMP_FULL:\t")+time.timestamp(DateTime::TIMESTAMP_FULL+00));
 
-//  while (sd.exists(binName)) {
-//    char* p = strchr(binName, '.');
-//    if (!p) {
-//      error("no dot in filename");
-//    }
-//    while (true) {
-//      p--;
-//      if (p < binName || *p < '0' || *p > '9') {
-//        error("Can't create file name");
-//      }
-//      if (p[0] != '9') {
-//        p[0]++;
-//        break;
-//      }
-//      p[0] = '0';
-//    }
-//  }
-  
+#if USE_RTC
+  DateTime now = rtc.now();
+#else
+  DateTime now = DateTime(2025, 8, 11, 12, 0, 0);
+#endif
+  char binName[24] = {0};
+  snprintf(binName, sizeof(binName), "%04d_%02d_%02d_%02d_%02d_%02d.bin",
+           now.year(), now.month(), now.day(),
+           now.hour(), now.minute(), now.second());
+
+  //  while (sd.exists(binName)) {
+  //    char* p = strchr(binName, '.');
+  //    if (!p) {
+  //      error("no dot in filename");
+  //    }
+  //    while (true) {
+  //      p--;
+  //      if (p < binName || *p < '0' || *p > '9') {
+  //        error("Can't create file name");
+  //      }
+  //      if (p[0] != '9') {
+  //        p[0]++;
+  //        break;
+  //      }
+  //      p[0] = '0';
+  //    }
+  //  }
+
   Serial.print(F("Opening: "));
   Serial.println(binName);
-  if (!binFile.open(binName, O_RDWR | O_CREAT)) {
+  if (!binFile.open(binName, O_RDWR | O_CREAT))
+  {
     error("open binName failed");
   }
-  
+
   Serial.print(F("Allocating: "));
   Serial.print(MAX_FILE_SIZE_MiB);
   Serial.println(F(" MiB"));
-  if (!binFile.preAllocate(MAX_FILE_SIZE)) {
+  if (!binFile.preAllocate(MAX_FILE_SIZE))
+  {
     Serial.print(F("\nUnused stack: "));
     Serial.println(UnusedStack());
     error("preAllocate failed");
   }
 }
 //------------------------------------------------------------------------------
-bool createCsvFile() {
+bool createCsvFile()
+{
   char csvName[NAME_DIM];
 
-  if (!binFile.isOpen()){
+  if (!binFile.isOpen())
+  {
     Serial.println(F("No current binary file"));
     return false;
   }
   binFile.getName(csvName, sizeof(csvName));
-  char* dot = strchr(csvName, '.');
-  if (!dot) {
+  char *dot = strchr(csvName, '.');
+  if (!dot)
+  {
     error("no dot in binName");
   }
   strcpy(dot + 1, "csv");
-  if (!csvFile.open(csvName, O_WRONLY | O_CREAT | O_TRUNC)) {
+  if (!csvFile.open(csvName, O_WRONLY | O_CREAT | O_TRUNC))
+  {
     error("open csvFile failed");
   }
   Serial.print(F("Writing: "));
@@ -722,7 +796,8 @@ bool createCsvFile() {
 }
 //------------------------------------------------------------------------------
 // log data
-void logData() {
+void logData()
+{
   uint32_t t0;
   uint32_t t1;
   uint32_t overruns = 0;
@@ -731,9 +806,10 @@ void logData() {
   size_t maxFifoUse = 0;
   block_t fifoBuffer[FIFO_DIM];
 
-  adcInit((metadata_t*)fifoBuffer);
+  adcInit((metadata_t *)fifoBuffer);
   // Write metadata.
-  if (sizeof(metadata_t) != binFile.write(fifoBuffer, sizeof(metadata_t))) {
+  if (sizeof(metadata_t) != binFile.write(fifoBuffer, sizeof(metadata_t)))
+  {
     error("Write metadata failed");
   }
   fifoCount = 0;
@@ -752,32 +828,39 @@ void logData() {
   t1 = t0;
   // Start logging interrupts.
   adcStart();
-  while (1) {
+  while (1)
+  {
     uint32_t m;
     noInterrupts();
     size_t tmpFifoCount = fifoCount;
     interrupts();
-    if (tmpFifoCount) {
-      block_t* pBlock = fifoData + fifoTail;
+    if (tmpFifoCount)
+    {
+      block_t *pBlock = fifoData + fifoTail;
       // Write block to SD.
       m = micros();
-      if (sizeof(block_t) != binFile.write(pBlock, sizeof(block_t))) {
+      if (sizeof(block_t) != binFile.write(pBlock, sizeof(block_t)))
+      {
         error("write data failed");
       }
       m = micros() - m;
       t1 = millis();
-      if (m > maxLatencyUsec) {
+      if (m > maxLatencyUsec)
+      {
         maxLatencyUsec = m;
       }
-      if (tmpFifoCount > maxFifoUse) {
+      if (tmpFifoCount > maxFifoUse)
+      {
         maxFifoUse = tmpFifoCount;
       }
       count += pBlock->count;
 
       // Add overruns and possibly light LED.
-      if (pBlock->overrun) {
+      if (pBlock->overrun)
+      {
         overruns += pBlock->overrun;
-        if (ERROR_LED_PIN >= 0) {
+        if (ERROR_LED_PIN >= 0)
+        {
           digitalWrite(ERROR_LED_PIN, HIGH);
         }
       }
@@ -790,34 +873,40 @@ void logData() {
       fifoCount--;
       interrupts();
 
-      if (binFile.curPosition() >= MAX_FILE_SIZE) {
+      if (binFile.curPosition() >= MAX_FILE_SIZE)
+      {
         // File full so stop ISR calls.
         adcStop();
         break;
       }
     }
-    if (timerError) {
+    if (timerError)
+    {
       error("Missed timer event - rate too high");
     }
-    if (Serial.available()) {
+    if (Serial.available())
+    {
       // Stop ISR interrupts.
       isrStop = true;
     }
     // switch breaks for truncating
-   if (digitalRead(15)==LOW){
+    if (digitalRead(15) == LOW)
+    {
       isrStop = true;
     }
-    if (fifoCount == 0 && !adcActive()) {
+    if (fifoCount == 0 && !adcActive())
+    {
       break;
     }
-
   }
   Serial.println();
   // Truncate file if recording stopped early.
-  if (binFile.curPosition() < MAX_FILE_SIZE) {
+  if (binFile.curPosition() < MAX_FILE_SIZE)
+  {
     Serial.println(F("Truncating file"));
     Serial.flush();
-    if (!binFile.truncate()) {
+    if (!binFile.truncate())
+    {
       error("Can't truncate file");
     }
   }
@@ -832,24 +921,28 @@ void logData() {
   Serial.print(F("FIFO_DIM: "));
   Serial.println(FIFO_DIM);
   Serial.print(F("maxFifoUse: "));
-  Serial.println(maxFifoUse + 1);  // include ISR use.
+  Serial.println(maxFifoUse + 1); // include ISR use.
   Serial.println(F("Done"));
 }
 //------------------------------------------------------------------------------
-void openBinFile() {
+void openBinFile()
+{
   char name[NAME_DIM];
   clearSerialInput();
   Serial.println(F("Enter file name"));
-  if (!serialReadLine(name, sizeof(name))) {
+  if (!serialReadLine(name, sizeof(name)))
+  {
     return;
   }
-  if (!sd.exists(name)) {
+  if (!sd.exists(name))
+  {
     Serial.println(name);
     Serial.println(F("File does not exist"));
     return;
   }
   binFile.close();
-  if (!binFile.open(name, O_RDWR)) {
+  if (!binFile.open(name, O_RDWR))
+  {
     Serial.println(name);
     Serial.println(F("open failed"));
     return;
@@ -858,32 +951,42 @@ void openBinFile() {
 }
 //------------------------------------------------------------------------------
 // Print data file to Serial
-void printData() {
+void printData()
+{
   block_t buf;
-  if (!binFile.isOpen()) {
+  if (!binFile.isOpen())
+  {
     Serial.println(F("No current binary file"));
     return;
   }
   binFile.rewind();
-  if (binFile.read(&buf, sizeof(buf)) != sizeof(buf)) {
+  if (binFile.read(&buf, sizeof(buf)) != sizeof(buf))
+  {
     error("Read metadata failed");
   }
   Serial.println(F("Type any character to stop"));
   delay(1000);
   while (!Serial.available() &&
-         binFile.read(&buf, sizeof(buf)) == sizeof(buf)) {
-    if (buf.count == 0) {
+         binFile.read(&buf, sizeof(buf)) == sizeof(buf))
+  {
+    if (buf.count == 0)
+    {
       break;
     }
-    if (buf.overrun) {
+    if (buf.overrun)
+    {
       Serial.print(F("OVERRUN,"));
       Serial.println(buf.overrun);
     }
-    for (size_t i = 0; i < buf.count; i++) {
+    for (size_t i = 0; i < buf.count; i++)
+    {
       Serial.print(buf.data[i], DEC);
-      if ((i + 1) % PIN_COUNT) {
+      if ((i + 1) % PIN_COUNT)
+      {
         Serial.print(',');
-      } else {
+      }
+      else
+      {
         Serial.println();
       }
     }
@@ -891,85 +994,93 @@ void printData() {
   Serial.println(F("Done"));
 }
 //------------------------------------------------------------------------------
-bool serialReadLine(char* str, size_t size) {
+bool serialReadLine(char *str, size_t size)
+{
   size_t n = 0;
-  while (!Serial.available()) {
+  while (!Serial.available())
+  {
   }
-  while (true) {
+  while (true)
+  {
     int c = Serial.read();
-    if (c < ' ') break;
+    if (c < ' ')
+      break;
     str[n++] = c;
-    if (n >= size) {
+    if (n >= size)
+    {
       Serial.println(F("input too long"));
       return false;
     }
     uint32_t m = millis();
-    while (!Serial.available() && (millis() - m) < 100) {
+    while (!Serial.available() && (millis() - m) < 100)
+    {
     }
-    if (!Serial.available()) break;
+    if (!Serial.available())
+      break;
   }
   str[n] = 0;
   return true;
 }
 
 //------------------------------------------------------------------------------
-void setup(void) {
-  
+void setup(void)
+{
 
-  if (ERROR_LED_PIN >= 0) {
+  if (ERROR_LED_PIN >= 0)
+  {
     pinMode(ERROR_LED_PIN, OUTPUT);
   }
   Serial.begin(9600);
   Serial.setTimeout(500);
   pinMode(16, OUTPUT); //+5V for pin7
-  pinMode(14, INPUT); //+5V for pin7
+  pinMode(14, INPUT);  //+5V for pin7
   pinMode(17, OUTPUT); //+5V for pin7
-  pinMode(15, INPUT); // switch input
-  digitalWrite(17,HIGH);
+  pinMode(15, INPUT);  // switch input
+  digitalWrite(17, HIGH);
 
-  if (digitalRead(14)==HIGH){
-    digitalWrite(17,HIGH);
+  if (digitalRead(14) == HIGH)
+  {
+    digitalWrite(17, HIGH);
     delay(200);
-    digitalWrite(17,LOW);
+    digitalWrite(17, LOW);
     delay(200);
-    digitalWrite(17,HIGH);
+    digitalWrite(17, HIGH);
     delay(200);
-    digitalWrite(17,LOW);
+    digitalWrite(17, LOW);
     delay(200);
-    digitalWrite(17,HIGH);
+    digitalWrite(17, HIGH);
     delay(200);
-    digitalWrite(17,LOW);
+    digitalWrite(17, LOW);
     delay(200);
-    digitalWrite(17,HIGH);
-
+    digitalWrite(17, HIGH);
   }
-  while (digitalRead(14)==HIGH){
-      //Serial.print( 1 / (0.0001 * (micros() - testms)) ); // Looks like the sampling freq is 1250Hz
-      //  Serial.print(' ');
+  while (digitalRead(14) == HIGH)
+  {
+    // Serial.print( 1 / (0.0001 * (micros() - testms)) ); // Looks like the sampling freq is 1250Hz
+    //   Serial.print(' ');
 
-      Serial.print(analogRead(A0));
-        Serial.print(' ');
-      Serial.print(analogRead(A1));
-        Serial.print(' ');
-      Serial.print(analogRead(A2));
-        Serial.print(' ');
-      Serial.print(analogRead(A3));
-        Serial.print(' ');
-      Serial.print(analogRead(A4));
-        Serial.print(' ');
-      Serial.println(analogRead(A5));
-    
-      //testms = micros();
-    
+    Serial.print(analogRead(A0));
+    Serial.print(' ');
+    Serial.print(analogRead(A1));
+    Serial.print(' ');
+    Serial.print(analogRead(A2));
+    Serial.print(' ');
+    Serial.print(analogRead(A3));
+    Serial.print(' ');
+    Serial.print(analogRead(A4));
+    Serial.print(' ');
+    Serial.println(analogRead(A5));
+
+    // testms = micros();
   }
 
-digitalWrite(17,HIGH);
+  digitalWrite(17, HIGH);
 
-  //while (!Serial) {
-  //}
-  //Serial.println(F("Type any character to begin."));
-  //while (!Serial.available()) {
-  //}
+  // while (!Serial) {
+  // }
+  // Serial.println(F("Type any character to begin."));
+  // while (!Serial.available()) {
+  // }
 
   FillStack();
 
@@ -980,37 +1091,43 @@ digitalWrite(17,HIGH);
   Serial.println(
       F("\nFor best performance edit SdFatConfig.h\n"
         "and set ENABLE_DEDICATED_SPI nonzero"));
-#endif  // !ENABLE_DEDICATED_SPI
+#endif // !ENABLE_DEDICATED_SPI
   // Initialize SD.
-  if (!sd.begin(SD_CONFIG)) {
+  if (!sd.begin(SD_CONFIG))
+  {
     error("sd.begin failed");
   }
 #if USE_RTC
-  if (!rtc.begin()) {
+  if (!rtc.begin())
+  {
     error("rtc.begin failed");
   }
-  if (!rtc.isrunning()) {
+  if (!rtc.isrunning())
+  {
     // Set RTC to sketch compile date & time.
     // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-    //error("RTC is NOT running!"); //TODO: this was triggering - need to investigate!
+    // error("RTC is NOT running!"); //TODO: this was triggering - need to investigate!
     Serial.println("RTC is NOT running!");
-  } else {
+  }
+  else
+  {
     Serial.println(F("RTC is running"));
     printTime(rtc.now());
   }
   // Set callback
   FsDateTime::setCallback(dateTime);
-#endif  // USE_RTC
+#endif // USE_RTC
 }
 //-------
 // Added function to reset from cmd in debug mode
-void(* resetFunc) (void) = 0;
+void (*resetFunc)(void) = 0;
 //------------------------------------------------------------------------------
-void loop(void) {
+void loop(void)
+{
   printUnusedStack();
   // Read any Serial data.
   clearSerialInput();
-  digitalWrite(17,HIGH);
+  digitalWrite(17, HIGH);
 
   Serial.println();
   Serial.println(F("Running BeeSpy3 version D"));
@@ -1023,61 +1140,82 @@ void loop(void) {
   Serial.println(F("t - set the RTC time"));
   Serial.println(F("x - RESET"));
 
-  char c='l';
-  if (digitalRead(15)==HIGH){
-        c='r';
-        Serial.println("recording");
-        digitalWrite(17, LOW);   
+  char c = 'l';
+  if (digitalRead(15) == HIGH)
+  {
+    c = 'r';
+    Serial.println("recording");
+    digitalWrite(17, LOW);
+  }
+  else
+  {
+    digitalWrite(17, HIGH);
 
-  } else {
-    digitalWrite(17,HIGH);
-
-    while (!Serial.available()) {
-      if(digitalRead(14) == HIGH || digitalRead(15) == HIGH){
+    while (!Serial.available())
+    {
+      if (digitalRead(14) == HIGH || digitalRead(15) == HIGH)
+      {
         resetFunc();
       }
     }
-    
+
     c = tolower(Serial.read());
     Serial.println();
-    
-    if (ERROR_LED_PIN >= 0) {
+
+    if (ERROR_LED_PIN >= 0)
+    {
       digitalWrite(ERROR_LED_PIN, LOW);
     }
     // Read any Serial data.
     clearSerialInput();
-
   }
-  if (c == 'b') {
+  if (c == 'b')
+  {
     openBinFile();
-  } else if (c == 'c') {
-    if (createCsvFile()) {
+  }
+  else if (c == 'c')
+  {
+    if (createCsvFile())
+    {
       binaryToCsv();
     }
-  } else if (c == 'l') {
+  }
+  else if (c == 'l')
+  {
     Serial.println(F("ls:"));
     sd.ls(&Serial, LS_DATE | LS_SIZE);
-  } else if (c == 'p') {
+  }
+  else if (c == 'p')
+  {
     printData();
-  } else if (c == 'r') {
+  }
+  else if (c == 'r')
+  {
     createBinFile();
     logData();
-  } else if (c == 'x'){
+  }
+  else if (c == 'x')
+  {
     resetFunc();
-  }else if (c == 't'){
-    //Reset the rtc datetime to compilation
+  }
+  else if (c == 't')
+  {
+#if USE_RTC
+    // Reset the rtc datetime to compilation
     stopRTC();
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     startRTC();
     DateTime dtnow = rtc.now();
     Serial.println("Reset RTC time to:");
     printTime(dtnow);
-  } else {
+#endif
+  }
+  else
+  {
     Serial.println(F("Invalid entry"));
   }
-  digitalWrite(17,HIGH);
-
+  digitalWrite(17, HIGH);
 }
-#else  // __AVR__
+#else // __AVR__
 #error This program is only for AVR.
-#endif  // __AVR__
+#endif // __AVR__
