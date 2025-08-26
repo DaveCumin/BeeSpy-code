@@ -185,6 +185,8 @@ class SpectrogramViewer(QMainWindow):
             return 0.0
         
         flat_values = self.values.flatten()
+        ##remove nans
+        flat_values = flat_values[~np.isnan(flat_values)]
         return np.percentile(flat_values, cutoff_percent)
     
     def on_cutoff_change(self, value):
@@ -358,15 +360,16 @@ class SpectrogramViewer(QMainWindow):
         self.canvas.ax3.set_xlabel('Time')
         
         # Plot original data on left y-axis
+        # Remove existing ticks
+        self.canvas.ax3.set_yticks([])
         line1 = self.canvas.ax3.plot(self.times, original_power, 'b-', linewidth=2, label='Original Data', alpha=0.7)
         self.canvas.ax3.set_ylabel('Original Power Sum', color='b')
         self.canvas.ax3.tick_params(axis='y', labelcolor='b')
         
         # Create second y-axis for transformed data
         ax3_twin = self.canvas.ax3.twinx()
-        # make sure it's cleared
-        ax3_twin.clear()
-        
+        # Remove existing ticks
+        ax3_twin.set_yticks([])
         line2 = ax3_twin.plot(self.times, transformed_power, 'r-', linewidth=2, label='Transformed Data', alpha=0.7)
         ax3_twin.set_ylabel('Transformed Power Sum', color='r')
         ax3_twin.tick_params(axis='y', labelcolor='r')
