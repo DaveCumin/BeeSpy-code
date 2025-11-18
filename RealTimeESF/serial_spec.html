@@ -477,20 +477,20 @@
         const nyquist = sampleRate / 2;
 
         // Draw frequency labels
-        const numLabels = 5;
-        for (let i = 0; i <= numLabels; i++) {
-          const frequency = (nyquist / numLabels) * i;
-          const y = height - (height / numLabels) * i;
+        // const numLabels = 5;
+        // for (let i = 0; i <= numLabels; i++) {
+        //   const frequency = (nyquist / numLabels) * i;
+        //   const y = height - (height / numLabels) * i;
 
-          let label;
-          if (frequency >= 1000) {
-            label = (frequency / 1000).toFixed(1) + "kHz";
-          } else {
-            label = frequency.toFixed(0) + "Hz";
-          }
+        //   let label;
+        //   if (frequency >= 1000) {
+        //     label = (frequency / 1000).toFixed(1) + "kHz";
+        //   } else {
+        //     label = frequency.toFixed(0) + "Hz";
+        //   }
 
-          ctx.fillText(label, width - 5, y + 3);
-        }
+        //   ctx.fillText(label, width - 5, y + 3);
+        // }
       }
 
       // Initialize the spectrograms with empty data
