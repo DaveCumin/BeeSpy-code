@@ -365,42 +365,42 @@ void printUnusedStack() {
 //------------------------------------------------------------------------------
 // Function to stop the RTC (set CH bit to 1)
 void stopRTC() {
-  //Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
-  //Wire.write(0x00);              // Start at the seconds register (address 0x00)
-  //Wire.endTransmission();
+  Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
+  Wire.write(0x00);              // Start at the seconds register (address 0x00)
+  Wire.endTransmission();
   
- // Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
-  //uint8_t seconds = Wire.read(); // Read the seconds register
+  Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
+  uint8_t seconds = Wire.read(); // Read the seconds register
   
   // Set the CH (Clock Halt) bit to 1 to stop the clock
-  //seconds |= 0x80;
+  seconds |= 0x80;
 
   // Write the modified seconds back to stop the clock
-  //Wire.beginTransmission(0x68);
-  //Wire.write(0x00);              // Start at the seconds register
-  //Wire.write(seconds);           // Write the modified seconds register (CH bit set)
-  //Wire.endTransmission();
+  Wire.beginTransmission(0x68);
+  Wire.write(0x00);              // Start at the seconds register
+  Wire.write(seconds);           // Write the modified seconds register (CH bit set)
+  Wire.endTransmission();
 
   Serial.println("RTC stopped!");
 }
 
 // Function to start the RTC (clear CH bit to 0)
 void startRTC() {
-  //Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
-  //Wire.write(0x00);              // Start at the seconds register (address 0x00)
-  //Wire.endTransmission();
+  Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
+  Wire.write(0x00);              // Start at the seconds register (address 0x00)
+  Wire.endTransmission();
   
-  //Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
-  //uint8_t seconds = Wire.read(); // Read the seconds register
+  Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
+  uint8_t seconds = Wire.read(); // Read the seconds register
   
   // Clear the CH (Clock Halt) bit to 0 to start the clock
-  //seconds &= 0x7F;
+  seconds &= 0x7F;
 
   // Write the modified seconds back to start the clock
-  //Wire.beginTransmission(0x68);
-  //Wire.write(0x00);              // Start at the seconds register
-  //Wire.write(seconds);           // Write the modified seconds register (CH bit cleared)
-  //Wire.endTransmission();
+  Wire.beginTransmission(0x68);
+  Wire.write(0x00);              // Start at the seconds register
+  Wire.write(seconds);           // Write the modified seconds register (CH bit cleared)
+  Wire.endTransmission();
 
   Serial.println("RTC started!");
 }
