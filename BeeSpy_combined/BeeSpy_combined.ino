@@ -863,10 +863,10 @@ void logData() {
   adcStart();
   while (1) {
     //BlinkOK to show working
-    if(millis() - OKtime > 10000){
-      blinkOK();
-      OKtime = millis();
-    }
+    // if(millis() - OKtime > 10000){
+    //   blinkOK();
+    //   OKtime = millis();
+    // }
 
     uint32_t m;
     noInterrupts();
