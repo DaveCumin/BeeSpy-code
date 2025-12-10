@@ -33,6 +33,18 @@
 MinimumSerial MinSerial;
 #define Serial MinSerial
 #endif  // __AVR_ATmega328P__
+
+//------------------------------------------------------------------------------
+// VARIABLES THAT CAN BE CHANGED
+//------------------------------------------------------------------------------
+// Sample rate in samples per second.
+const float SAMPLE_RATE = 5000;  // Must be 0.25 or greater.
+// Maximum file size in bytes.
+const uint32_t MAX_FILE_SIZE_MiB = 18;  // 100 MiB file.  36MB is 10 min The program creates a contiguous file with MAX_FILE_SIZE_MiB bytes. The file will be truncated if logging is stopped early.
+
+//------------------------------------------------------------------------------
+
+
 //------------------------------------------------------------------------------
 // This example was designed for exFAT but will support FAT16/FAT32.
 //
@@ -67,9 +79,7 @@ const uint8_t SD_CS_PIN = 53;
 // Analog pin number list for a sample.  Pins may be in any order and pin
 // numbers may be repeated.
 const uint8_t PIN_LIST[] = {0, 1, 2, 3, 4, 5};
-//------------------------------------------------------------------------------
-// Sample rate in samples per second.
-const float SAMPLE_RATE = 5000;  // Must be 0.25 or greater.
+
 
 // The interval between samples in seconds, SAMPLE_INTERVAL, may be set to a
 // constant instead of being calculated from SAMPLE_RATE.  SAMPLE_RATE is not
@@ -104,11 +114,6 @@ uint8_t const ADC_REF = (1 << REFS0);  // Vcc Reference.
 //------------------------------------------------------------------------------
 // File definitions.
 //
-// Maximum file size in bytes.
-// The program creates a contiguous file with MAX_FILE_SIZE_MiB bytes.
-// The file will be truncated if logging is stopped early.
-const uint32_t MAX_FILE_SIZE_MiB = 18;  // 100 MiB file.  36MB is 10 min
-
 // log file name.  Integer field before dot will be incremented.
 #define LOG_FILE_NAME "AvrAdc00.bin"
 
@@ -685,21 +690,45 @@ void clearSerialInput() {
 //------------------------------------------------------------------------------
 void takeOtherMeasures(){
 
-    uint16_t theCO2 = mySensor.getCO2();
-    float theTemp = mySensor.getTemperature();
-    float theHum = mySensor.getHumidity();
+  logFile = sd.open(sensorFilename, FILE_WRITE);
+  uint16_t theCO2 = -1;
+  float theTemp = -1;
+  float theHum = -1;
+
+  // Trigger a single-shot measurement
+  if (mySensor.measureSingleShot() == false) {
+    Serial.println("Single shot failed");
+    theCO2 = -9;
+    theTemp = -9;
+    theHum = -9;
+  } else {
+    // Wait/polling loop for data ready (up to ~5 seconds)
+    unsigned long startTime = millis();
+    while (mySensor.readMeasurement() == false) {
+      if (millis() - startTime > 6000) {  // Timeout after 6 seconds
+        Serial.println("Timeout");
+        theCO2 = -8;
+        theTemp = -8;
+        theHum = -8;
+      }
+      delay(100);  // Short delay to avoid busy-waiting
+    }
+    theCO2 = mySensor.getCO2();
+    theTemp = mySensor.getTemperature();
+    theHum = mySensor.getHumidity();
+  }
+
+  Serial.print(F("CO2(ppm):"));
+  Serial.print(theCO2);
+  Serial.print(F("\tHumidity(%RH):"));
+  Serial.print(theHum, 1);
+  Serial.print(F("\tTemperature(C):"));
+  Serial.print(theTemp, 1);
+  Serial.println();
 
 
-    Serial.print(F("CO2(ppm):"));
-    Serial.print(theCO2);
-    Serial.print(F("\tHumidity(%RH):"));
-    Serial.print(theHum, 1);
-    Serial.print(F("\tTemperature(C):"));
-    Serial.print(theTemp, 1);
-    Serial.println();
-
-    logFile = sd.open(sensorFilename, FILE_WRITE);
-    if(USE_RTC){
+  //WRITE IT ALL TO FILE
+  if(USE_RTC){
       printTime(rtc.now());
       logFile.print(rtc.now().year(), DEC);
       logFile.print('/');
@@ -715,16 +744,16 @@ void takeOtherMeasures(){
     }else{
       logFile.print(millis());
     }
-    logFile.print(",");
-    logFile.print(theCO2);
-    logFile.print(",");
-    logFile.print(theHum, 1);
-    logFile.print(",");
-    logFile.print(theTemp, 1);
-    logFile.println();
-    logFile.close();
-    
 
+  logFile.print(",");
+  logFile.print(theCO2);
+  logFile.print(",");
+  logFile.print(theHum, 1);
+  logFile.print(",");
+  logFile.print(theTemp, 1);
+  logFile.println();
+  logFile.close();
+    
 }
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
@@ -1051,7 +1080,31 @@ bool serialReadLine(char* str, size_t size) {
 //====================================================================================
 void setupSensor(){
   Wire.begin();
-  if (mySensor.begin() == false){
+  // if (mySensor.begin() == false){
+  //   Serial.println(F("SDC41 sensor not detected. No data will be recorded."));
+  //   SENSORWORKING = 0;
+  //   digitalWrite(16,LOW);
+  //   delay(200);
+  //   digitalWrite(16,HIGH);
+  //   delay(400);
+  //   digitalWrite(16,LOW);
+  //   delay(200);
+  //   digitalWrite(16,HIGH);
+  //   delay(400);
+  //   digitalWrite(16,LOW);
+
+  //   //from the low power mode example
+  //   if (mySensor.stopPeriodicMeasurement() == true){
+  //     Serial.println(F("Periodic measurement is disabled!"));
+  //   }  
+
+  //   //Now we can enable low power periodic measurements
+  //   if (mySensor.startLowPowerPeriodicMeasurement() == true){
+  //     Serial.println(F("Low power mode enabled!"));
+  //   }
+
+// Initialize: No auto periodic start, ASC enabled
+  if (mySensor.begin(false, true, false) == false) {
     Serial.println(F("SDC41 sensor not detected. No data will be recorded."));
     SENSORWORKING = 0;
     digitalWrite(16,LOW);
@@ -1063,16 +1116,6 @@ void setupSensor(){
     digitalWrite(16,HIGH);
     delay(400);
     digitalWrite(16,LOW);
-
-    //from the low power mode example
-    if (mySensor.stopPeriodicMeasurement() == true){
-      Serial.println(F("Periodic measurement is disabled!"));
-    }  
-
-    //Now we can enable low power periodic measurements
-    if (mySensor.startLowPowerPeriodicMeasurement() == true){
-      Serial.println(F("Low power mode enabled!"));
-    }
 
   }else{
     SENSORWORKING = 1;
@@ -1183,7 +1226,7 @@ void loop(void) {
   digitalWrite(17,HIGH);
 
   Serial.println();
-  Serial.println(F("Running BeeSpy3 version Combined_D"));
+  Serial.println(F("Running BeeSpy3 version Combined_E"));
   Serial.println(F("type:"));
   Serial.println(F("b - open existing bin file"));
   Serial.println(F("c - convert file to csv"));
