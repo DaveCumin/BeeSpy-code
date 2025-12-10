@@ -66,10 +66,10 @@ const uint8_t SD_CS_PIN = 53;
 //------------------------------------------------------------------------------
 // Analog pin number list for a sample.  Pins may be in any order and pin
 // numbers may be repeated.
-const uint8_t PIN_LIST[] = {0, 1, 2, 3, 4, 5};
+const uint8_t PIN_LIST[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 //------------------------------------------------------------------------------
 // Sample rate in samples per second.
-const float SAMPLE_RATE = 5000;  // Must be 0.25 or greater.
+const float SAMPLE_RATE = 2000;  // Must be 0.25 or greater.
 
 // The interval between samples in seconds, SAMPLE_INTERVAL, may be set to a
 // constant instead of being calculated from SAMPLE_RATE.  SAMPLE_RATE is not
@@ -81,18 +81,6 @@ const float SAMPLE_INTERVAL = 1.0 / SAMPLE_RATE;
 // be rounded to a a multiple of the ADC clock period and will reduce sample
 // time jitter.
 #define ROUND_SAMPLE_INTERVAL 1
-
-
-//=====================================================================// changed
-//=========== SCD41 SENSOR ====================================================
-#include <Wire.h>
-#include "SparkFun_SCD4x_Arduino_Library.h"
-SCD4x mySensor;
-bool SENSORWORKING = 0;
-File logFile;
-const char* sensorFilename = "otherData.csv";
-
-//=============================================================================
 
 
 //------------------------------------------------------------------------------
@@ -107,7 +95,7 @@ uint8_t const ADC_REF = (1 << REFS0);  // Vcc Reference.
 // Maximum file size in bytes.
 // The program creates a contiguous file with MAX_FILE_SIZE_MiB bytes.
 // The file will be truncated if logging is stopped early.
-const uint32_t MAX_FILE_SIZE_MiB = 18;  // 100 MiB file.  36MB is 10 min
+const uint32_t MAX_FILE_SIZE_MiB = 20;  // 100 MiB file.  36MB is 10 min for 6 channels
 
 // log file name.  Integer field before dot will be incremented.
 #define LOG_FILE_NAME "AvrAdc00.bin"
@@ -365,42 +353,42 @@ void printUnusedStack() {
 //------------------------------------------------------------------------------
 // Function to stop the RTC (set CH bit to 1)
 void stopRTC() {
-  Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
-  Wire.write(0x00);              // Start at the seconds register (address 0x00)
-  Wire.endTransmission();
+  //Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
+  //Wire.write(0x00);              // Start at the seconds register (address 0x00)
+  //Wire.endTransmission();
   
-  Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
-  uint8_t seconds = Wire.read(); // Read the seconds register
+ // Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
+  //uint8_t seconds = Wire.read(); // Read the seconds register
   
   // Set the CH (Clock Halt) bit to 1 to stop the clock
-  seconds |= 0x80;
+  //seconds |= 0x80;
 
   // Write the modified seconds back to stop the clock
-  Wire.beginTransmission(0x68);
-  Wire.write(0x00);              // Start at the seconds register
-  Wire.write(seconds);           // Write the modified seconds register (CH bit set)
-  Wire.endTransmission();
+  //Wire.beginTransmission(0x68);
+  //Wire.write(0x00);              // Start at the seconds register
+  //Wire.write(seconds);           // Write the modified seconds register (CH bit set)
+  //Wire.endTransmission();
 
   Serial.println("RTC stopped!");
 }
 
 // Function to start the RTC (clear CH bit to 0)
 void startRTC() {
-  Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
-  Wire.write(0x00);              // Start at the seconds register (address 0x00)
-  Wire.endTransmission();
+  //Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
+  //Wire.write(0x00);              // Start at the seconds register (address 0x00)
+  //Wire.endTransmission();
   
-  Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
-  uint8_t seconds = Wire.read(); // Read the seconds register
+  //Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
+  //uint8_t seconds = Wire.read(); // Read the seconds register
   
   // Clear the CH (Clock Halt) bit to 0 to start the clock
-  seconds &= 0x7F;
+  //seconds &= 0x7F;
 
   // Write the modified seconds back to start the clock
-  Wire.beginTransmission(0x68);
-  Wire.write(0x00);              // Start at the seconds register
-  Wire.write(seconds);           // Write the modified seconds register (CH bit cleared)
-  Wire.endTransmission();
+  //Wire.beginTransmission(0x68);
+  //Wire.write(0x00);              // Start at the seconds register
+  //Wire.write(seconds);           // Write the modified seconds register (CH bit cleared)
+  //Wire.endTransmission();
 
   Serial.println("RTC started!");
 }
@@ -683,63 +671,9 @@ void clearSerialInput() {
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
-void takeOtherMeasures(){
-
-    uint16_t theCO2 = mySensor.getCO2();
-    float theTemp = mySensor.getTemperature();
-    float theHum = mySensor.getHumidity();
-
-
-    Serial.print(F("CO2(ppm):"));
-    Serial.print(theCO2);
-    Serial.print(F("\tHumidity(%RH):"));
-    Serial.print(theHum, 1);
-    Serial.print(F("\tTemperature(C):"));
-    Serial.print(theTemp, 1);
-    Serial.println();
-
-    logFile = sd.open(sensorFilename, FILE_WRITE);
-    if(USE_RTC){
-      printTime(rtc.now());
-      logFile.print(rtc.now().year(), DEC);
-      logFile.print('/');
-      logFile.print(rtc.now().month(), DEC);
-      logFile.print('/');
-      logFile.print(rtc.now().day(), DEC);
-      logFile.print(" ");
-      logFile.print(rtc.now().hour(), DEC);
-      logFile.print(':');
-      logFile.print(rtc.now().minute(), DEC);
-      logFile.print(':');
-      logFile.print(rtc.now().second(), DEC);
-    }else{
-      logFile.print(millis());
-    }
-    logFile.print(",");
-    logFile.print(theCO2);
-    logFile.print(",");
-    logFile.print(theHum, 1);
-    logFile.print(",");
-    logFile.print(theTemp, 1);
-    logFile.println();
-    logFile.close();
-    
-
-}
-//------------------------------------------------------------------------------
-//------------------------------------------------------------------------------
-//------------------------------------------------------------------------------
 void createBinFile() {
   binFile.close();
-
-  //DO THE TEMP/CO2 STUFF
-  if(SENSORWORKING) {
-    takeOtherMeasures();
-  } else {
-    setupSensor();
-  }
-  
- 
+   
   //DateTime time = rtc.now();
   // string binName[ ] =("DateTime::TIMESTAMP_FULL:\t")+time.timestamp(DateTime::TIMESTAMP_FULL+'.bin');
   // char binName[50];
@@ -863,10 +797,10 @@ void logData() {
   adcStart();
   while (1) {
     //BlinkOK to show working
-    // if(millis() - OKtime > 10000){
-    //   blinkOK();
-    //   OKtime = millis();
-    // }
+    if(millis() - OKtime > 10000){
+      blinkOK();
+      OKtime = millis();
+    }
 
     uint32_t m;
     noInterrupts();
@@ -1049,41 +983,6 @@ bool serialReadLine(char* str, size_t size) {
 }
 
 //====================================================================================
-void setupSensor(){
-  Wire.begin();
-  if (mySensor.begin() == false){
-    Serial.println(F("SDC41 sensor not detected. No data will be recorded."));
-    SENSORWORKING = 0;
-    digitalWrite(16,LOW);
-    delay(200);
-    digitalWrite(16,HIGH);
-    delay(400);
-    digitalWrite(16,LOW);
-    delay(200);
-    digitalWrite(16,HIGH);
-    delay(400);
-    digitalWrite(16,LOW);
-
-    //from the low power mode example
-    if (mySensor.stopPeriodicMeasurement() == true){
-      Serial.println(F("Periodic measurement is disabled!"));
-    }  
-
-    //Now we can enable low power periodic measurements
-    if (mySensor.startLowPowerPeriodicMeasurement() == true){
-      Serial.println(F("Low power mode enabled!"));
-    }
-
-  }else{
-    SENSORWORKING = 1;
-    logFile = sd.open(sensorFilename, FILE_WRITE);
-    logFile.println("Time, CO2, Humidity, Temperature");
-    logFile.close();
-  }
-
-}
-//====================================================================================
-//------------------------------------------------------------------------------
 void setup(void) {
 
   if (ERROR_LED_PIN >= 0) {
@@ -1097,8 +996,6 @@ void setup(void) {
   pinMode(15, INPUT_PULLUP); // switch input //changed
   digitalWrite(17,HIGH);
 
-  setupSensor();
- 
   if (digitalRead(14)==LOW){ //changed
     digitalWrite(17,HIGH);
     delay(200);
@@ -1116,22 +1013,11 @@ void setup(void) {
 
   }
   while (digitalRead(14)==LOW){//changed
-      //Serial.print( 1 / (0.0001 * (micros() - testms)) ); // Looks like the sampling freq is 1250Hz
-      //  Serial.print(' ');
-
-      Serial.print(analogRead(A0));
+      for(int i=0; i< sizeof(PIN_LIST); i++){
+        Serial.print(analogRead(PIN_LIST[i]));
         Serial.print(' ');
-      Serial.print(analogRead(A1));
-        Serial.print(' ');
-      Serial.print(analogRead(A2));
-        Serial.print(' ');
-      Serial.print(analogRead(A3));
-        Serial.print(' ');
-      Serial.print(analogRead(A4));
-        Serial.print(' ');
-      Serial.println(analogRead(A5));
-    
-      //testms = micros();
+      }
+      Serial.println();
     
   }
 
@@ -1183,7 +1069,7 @@ void loop(void) {
   digitalWrite(17,HIGH);
 
   Serial.println();
-  Serial.println(F("Running BeeSpy3 version Combined_D"));
+  Serial.println(F("Running BeeSpy3 version observation-16ch B"));
   Serial.println(F("type:"));
   Serial.println(F("b - open existing bin file"));
   Serial.println(F("c - convert file to csv"));
