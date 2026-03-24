@@ -1,5 +1,5 @@
 /**
- * BeeSpy3 - Combined_H
+ * BeeSpy3 - Combined
  * ADC data logger with SCD41 CO2/temp/humidity sensor.
  *
  * If no SD card is detected at startup, the device will still allow
@@ -567,7 +567,7 @@ void createBinFile() {
 
   char binName[36] = {0};
   snprintf(binName, sizeof(binName),
-           "%04d%02d%02d_%02d%02d%02d_%s.bin",
+           "%04d_%02d_%02d_%02d_%02d_%02d_%s.bin",
            now.year(), now.month(), now.day(),
            now.hour(), now.minute(), now.second(),
            readerID);
@@ -839,7 +839,7 @@ void loop(void) {
   digitalWrite(17, HIGH);
 
   Serial.println();
-  Serial.println(F("Running BeeSpy3 version Combined_H"));
+  Serial.println(F("Running BeeSpy3 version Combined_I"));
   Serial.print(F("Reader ID : ")); Serial.println(readerID);
   Serial.print(F("SD card   : ")); Serial.println(sdAvailable ? F("OK") : F("NOT DETECTED - recording disabled"));
 
