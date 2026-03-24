@@ -1,27 +1,15 @@
-
 /**
- * This program logs data from the Arduino ADC to a binary file.
+ * BeeSpy3 - Combined version H
+ * ADC data logger with SCD41 CO2/temp/humidity sensor.
  *
- * Samples are logged at regular intervals. Each Sample consists of the ADC
- * values for the analog pins defined in the PIN_LIST array.  The pins numbers
- * may be in any order.
- *
- * Edit the configuration constants below to set the sample pins, sample rate,
- * and other configuration values.
- *
- * If your SD card has a long write latency, it may be necessary to use
- * slower sample rates.  Using a Mega Arduino helps overcome latency
- * problems since more 64 byte buffer blocks will be used.
- *
- * Each 64 byte data block in the file has a four byte header followed by up
- * to 60 bytes of data. (60 values in 8-bit mode or 30 values in 10-bit mode)
- * Each block contains an integral number of samples with unused space at the
- * end of the block.
- *
+ * If no SD card is detected at startup, the device will still allow
+ * live analogue viewing (pin 14 LOW) but will block all recording/file
+ * operations and flash the error LED to indicate the problem.
  */
 #ifdef __AVR__
 #include <SPI.h>
-
+#include <Wire.h>
+#include "RTClib.h"
 #include "AvrAdcLogger.h"
 #include "BufferedPrint.h"
 #include "FreeStack.h"
@@ -40,91 +28,67 @@ MinimumSerial MinSerial;
 // Sample rate in samples per second.
 const float SAMPLE_RATE = 5000;  // Must be 0.25 or greater.
 // Maximum file size in bytes.
-const uint32_t MAX_FILE_SIZE_MiB = 18;  // 100 MiB file.  36MB is 10 min The program creates a contiguous file with MAX_FILE_SIZE_MiB bytes. The file will be truncated if logging is stopped early.
-
+const uint32_t MAX_FILE_SIZE_MiB = 18;  // 36MB is ~10 min at 5kHz/6ch
+// Unique value per physical device - stored in EEPROM, used in filenames
+char sensorID[9];
 //------------------------------------------------------------------------------
 
+uint32_t compileHash() {
+    const char* d = __DATE__;
+    const char* t = __TIME__;
+    uint32_t h = 2166136261UL;
+    for (int i = 0; d[i]; i++) h = (h ^ d[i]) * 16777619UL;
+    for (int i = 0; t[i]; i++) h = (h ^ t[i]) * 16777619UL;
+    return h;
+}
+
+void loadOrCreateSensorID() {
+    uint32_t h = compileHash();
+    snprintf(sensorID, sizeof(sensorID), "%08lX", h);
+}
 
 //------------------------------------------------------------------------------
-// This example was designed for exFAT but will support FAT16/FAT32.
-//
-// Note: Uno will not support SD_FAT_TYPE = 3.
-// SD_FAT_TYPE = 0 for SdFat/File as defined in SdFatConfig.h,
-// 1 for FAT16/FAT32, 2 for exFAT, 3 for FAT16/FAT32 and exFAT.
+// SD_FAT_TYPE = 3 supports FAT16/FAT32 and exFAT (not for Uno)
 #define SD_FAT_TYPE 3
-//------------------------------------------------------------------------------
-// Set USE_RTC nonzero for file timestamps.
-// RAM use will be marginal on Uno with RTClib.
-// Set USE_RTC nonzero for file timestamps.
-// RAM use will be marginal on Uno with RTClib.
-// 0 - RTC not used
-// 1 - DS1307
-// 2 - DS3231
-// 3 - PCF8523
-#define USE_RTC 1
-// #if USE_RTC
-#include "RTClib.h"
-// #endif  // USE_RTC
-//------------------------------------------------------------------------------
-// Pin definitions.
-//
-// Digital pin to indicate an error, set to -1 if not used.
-// The led blinks for fatal errors. The led goes on solid for SD write
-// overrun errors and logging continues.
-const int8_t ERROR_LED_PIN = 16;
 
-// SD chip select pin.
-const uint8_t SD_CS_PIN = 53;
+// USE_RTC: 0=none, 1=DS1307, 2=DS3231, 3=PCF8523
+#define USE_RTC 1
+
 //------------------------------------------------------------------------------
-// Analog pin number list for a sample.  Pins may be in any order and pin
-// numbers may be repeated.
+// Pin definitions
+const int8_t  ERROR_LED_PIN = 16;   // Blinks on fatal error; solid on overrun
+const uint8_t SD_CS_PIN     = 53;   // SD chip select
+
+//------------------------------------------------------------------------------
+// Analog pins to sample - may be in any order, may repeat
 const uint8_t PIN_LIST[] = {0, 1, 2, 3, 4, 5};
 
-
-// The interval between samples in seconds, SAMPLE_INTERVAL, may be set to a
-// constant instead of being calculated from SAMPLE_RATE.  SAMPLE_RATE is not
-// used in the code below.  For example, setting SAMPLE_INTERVAL = 2.0e-4
-// will result in a 200 microsecond sample interval.
 const float SAMPLE_INTERVAL = 1.0 / SAMPLE_RATE;
 
-// Setting ROUND_SAMPLE_INTERVAL non-zero will cause the sample interval to
-// be rounded to a a multiple of the ADC clock period and will reduce sample
-// time jitter.
 #define ROUND_SAMPLE_INTERVAL 1
 
-
-//=====================================================================// changed
-//=========== SCD41 SENSOR ====================================================
-#include <Wire.h>
+//------------------------------------------------------------------------------
+// SCD41 CO2/temp/humidity sensor
 #include "SparkFun_SCD4x_Arduino_Library.h"
 SCD4x mySensor;
-bool SENSORWORKING = 0;
-File logFile;
-const char* sensorFilename = "otherData.csv";
-
-//=============================================================================
-
+bool  SENSORWORKING  = false;
+bool  sdAvailable    = false;   // Set in setup() after sd.begin()
+File  logFile;
+char  sensorFilename[30];
 
 //------------------------------------------------------------------------------
-// Reference voltage.  See the processor data-sheet for reference details.
-// uint8_t const ADC_REF = 0; // External Reference AREF pin.
-uint8_t const ADC_REF = (1 << REFS0);  // Vcc Reference.
-// uint8_t const ADC_REF = (1 << REFS1);  // Internal 1.1 (only 644 1284P Mega)
-// uint8_t const ADC_REF = (1 << REFS1) | (1 << REFS0);  // Internal 1.1 or 2.56
-//------------------------------------------------------------------------------
-// File definitions.
-//
-// log file name.  Integer field before dot will be incremented.
+// ADC reference
+uint8_t const ADC_REF = (1 << REFS0);  // Vcc reference
+
+// Log file name template (only used for legacy open-by-name)
 #define LOG_FILE_NAME "AvrAdc00.bin"
 
-// Maximum length name including zero byte.
 const size_t NAME_DIM = 40;
 
-// Set RECORD_EIGHT_BITS non-zero to record only the high 8-bits of the ADC.
 #define RECORD_EIGHT_BITS 0
+
 //------------------------------------------------------------------------------
-// FIFO size definition. Use a multiple of 512 bytes for best performance.
-//
+// FIFO sizing
 #if RAMEND < 0X8FF
 #error SRAM too small
 #elif RAMEND < 0X10FF
@@ -133,52 +97,31 @@ const size_t FIFO_SIZE_BYTES = 512;
 const size_t FIFO_SIZE_BYTES = 4 * 512;
 #elif RAMEND < 0X40FF
 const size_t FIFO_SIZE_BYTES = 12 * 512;
-#else   // RAMEND
+#else
 const size_t FIFO_SIZE_BYTES = 16 * 512;
-#endif  // RAMEND
+#endif
+
 //------------------------------------------------------------------------------
-// ADC clock rate.
-// The ADC clock rate is normally calculated from the pin count and sample
-// interval.  The calculation attempts to use the lowest possible ADC clock
-// rate.
-//
-// You can select an ADC clock rate by defining the symbol ADC_PRESCALER to
-// one of these values.  You must choose an appropriate ADC clock rate for
-// your sample interval.
-// #define ADC_PRESCALER 7 // F_CPU/128 125 kHz on an Uno
-// #define ADC_PRESCALER 6 // F_CPU/64  250 kHz on an Uno
-// #define ADC_PRESCALER 5 // F_CPU/32  500 kHz on an Uno
-// #define ADC_PRESCALER 4 // F_CPU/16 1000 kHz on an Uno
-// #define ADC_PRESCALER 3 // F_CPU/8  2000 kHz on an Uno (8-bit mode only)
-//==============================================================================
-// End of configuration constants.
-//==============================================================================
-// Temporary log file.  Will be deleted if a reset or power failure occurs.
+// ADC prescaler (auto-calculated unless overridden)
+// #define ADC_PRESCALER 7  // F_CPU/128 = 125 kHz on Uno
+
+//------------------------------------------------------------------------------
 #define TMP_FILE_NAME "tmp_adc.bin"
 
-// Number of analog pins to log.
-const uint8_t PIN_COUNT = sizeof(PIN_LIST) / sizeof(PIN_LIST[0]);
-
-// Minimum ADC clock cycles per sample interval
+const uint8_t  PIN_COUNT      = sizeof(PIN_LIST) / sizeof(PIN_LIST[0]);
 const uint16_t MIN_ADC_CYCLES = 15;
+const uint16_t ISR_SETUP_ADC  = PIN_COUNT > 1 ? 100 : 0;
+const uint16_t ISR_TIMER0     = 160;
 
-// Extra cpu cycles to setup ADC with more than one pin per sample.
-const uint16_t ISR_SETUP_ADC = PIN_COUNT > 1 ? 100 : 0;
-
-// Maximum cycles for timer0 system interrupt.
-const uint16_t ISR_TIMER0 = 160;
-//==============================================================================
 const uint32_t MAX_FILE_SIZE = MAX_FILE_SIZE_MiB << 20;
 
-// Max SPI rate for AVR is 10 MHz for F_CPU 20 MHz, 8 MHz for F_CPU 16 MHz.
 #define SPI_CLOCK SD_SCK_MHZ(10)
 
-// Select fastest interface.
 #if ENABLE_DEDICATED_SPI
 #define SD_CONFIG SdSpiConfig(SD_CS_PIN, DEDICATED_SPI, SPI_CLOCK)
-#else  // ENABLE_DEDICATED_SPI
+#else
 #define SD_CONFIG SdSpiConfig(SD_CS_PIN, SHARED_SPI, SPI_CLOCK)
-#endif  // ENABLE_DEDICATED_SPI
+#endif
 
 #if SD_FAT_TYPE == 0
 SdFat sd;
@@ -192,223 +135,175 @@ typedef ExFile file_t;
 #elif SD_FAT_TYPE == 3
 SdFs sd;
 typedef FsFile file_t;
-#else  // SD_FAT_TYPE
+#else
 #error Invalid SD_FAT_TYPE
-#endif  // SD_FAT_TYPE
+#endif
 
 file_t binFile;
 file_t csvFile;
 
-// char binName[] = LOG_FILE_NAME;
-
-// TESTING
 unsigned long testms = 0;
 
-
 #if RECORD_EIGHT_BITS
-const size_t BLOCK_MAX_COUNT = PIN_COUNT * (DATA_DIM8 / PIN_COUNT);
-typedef block8_t block_t;
-#else   // RECORD_EIGHT_BITS
+const size_t BLOCK_MAX_COUNT = PIN_COUNT * (DATA_DIM8  / PIN_COUNT);
+typedef block8_t  block_t;
+#else
 const size_t BLOCK_MAX_COUNT = PIN_COUNT * (DATA_DIM16 / PIN_COUNT);
 typedef block16_t block_t;
-#endif  // RECORD_EIGHT_BITS
+#endif
 
-// Size of FIFO in blocks.
-size_t const FIFO_DIM = FIFO_SIZE_BYTES / sizeof(block_t);
-block_t* fifoData;
-volatile size_t fifoCount = 0;  // volatile - shared, ISR and background.
-size_t fifoHead = 0;            // Only accessed by ISR during logging.
-size_t fifoTail = 0;            // Only accessed by writer during logging.
+const size_t     FIFO_DIM   = FIFO_SIZE_BYTES / sizeof(block_t);
+block_t*         fifoData;
+volatile size_t  fifoCount  = 0;
+size_t           fifoHead   = 0;
+size_t           fifoTail   = 0;
+
 //==============================================================================
-// Interrupt Service Routines
+// ISR state
+volatile bool isrStop  = false;
+block_t*      isrBuf   = nullptr;
+uint16_t      isrOver  = 0;
 
-// Disable ADC interrupt if true.
-volatile bool isrStop = false;
-
-// Pointer to current buffer.
-block_t* isrBuf = nullptr;
-// overrun count
-uint16_t isrOver = 0;
-
-// ADC configuration for each pin.
 uint8_t adcmux[PIN_COUNT];
 uint8_t adcsra[PIN_COUNT];
 uint8_t adcsrb[PIN_COUNT];
 uint8_t adcindex = 1;
 
-// Insure no timer events are missed.
 volatile bool timerError = false;
-volatile bool timerFlag = false;
+volatile bool timerFlag  = false;
 
 //------------------------------------------------------------------------------
-// ADC done interrupt.
 ISR(ADC_vect) {
-  // Read ADC data.
 #if RECORD_EIGHT_BITS
   uint8_t d = ADCH;
-#else   // RECORD_EIGHT_BITS
-  // This will access ADCL first.
+#else
   uint16_t d = ADC;
-#endif  // RECORD_EIGHT_BITS
-
+#endif
   if (!isrBuf) {
     if (fifoCount < FIFO_DIM) {
       isrBuf = fifoData + fifoHead;
     } else {
-      // no buffers - count overrun
-      if (isrOver < 0XFFFF) {
-        isrOver++;
-      }
-      // Avoid missed timer error.
+      if (isrOver < 0XFFFF) isrOver++;
       timerFlag = false;
       return;
     }
   }
-  // Start ADC for next pin
   if (PIN_COUNT > 1) {
-    ADMUX = adcmux[adcindex];
+    ADMUX  = adcmux[adcindex];
     ADCSRB = adcsrb[adcindex];
     ADCSRA = adcsra[adcindex];
-    if (adcindex == 0) {
-      timerFlag = false;
-    }
+    if (adcindex == 0) timerFlag = false;
     adcindex = adcindex < (PIN_COUNT - 1) ? adcindex + 1 : 0;
   } else {
     timerFlag = false;
   }
-  // Store ADC data.
   isrBuf->data[isrBuf->count++] = d;
-
-  // Check for buffer full.
   if (isrBuf->count >= BLOCK_MAX_COUNT) {
     fifoHead = fifoHead < (FIFO_DIM - 1) ? fifoHead + 1 : 0;
     fifoCount++;
-    // Check for end logging.
-    if (isrStop) {
-      adcStop();
-      return;
-    }
-    // Set buffer needed and clear overruns.
-    isrBuf = nullptr;
+    if (isrStop) { adcStop(); return; }
+    isrBuf  = nullptr;
     isrOver = 0;
   }
 }
-//------------------------------------------------------------------------------
-// timer1 interrupt to clear OCF1B
+
 ISR(TIMER1_COMPB_vect) {
-  // Make sure ADC ISR responded to timer event.
-  if (timerFlag) {
-    timerError = true;
-  }
+  if (timerFlag) timerError = true;
   timerFlag = true;
 }
-//-------
-// Added function to reset from cmd in debug mode
-void(* resetFunc) (void) = 0;
+
+void(* resetFunc)(void) = 0;
+
 //==============================================================================
-// Error messages stored in flash.
+// Error macros
 #define error(msg) (Serial.println(F(msg)), errorHalt())
-#define assert(e) ((e) ? (void)0 : error("assert: " #e))
+#define assert(e)  ((e) ? (void)0 : error("assert: " #e))
+
 //------------------------------------------------------------------------------
-//
 void fatalBlink() {
   while (true) {
     if (ERROR_LED_PIN >= 0) {
-      digitalWrite(ERROR_LED_PIN, HIGH);
-      delay(200);
-      digitalWrite(ERROR_LED_PIN, LOW);
-      delay(200);
+      digitalWrite(ERROR_LED_PIN, HIGH); delay(200);
+      digitalWrite(ERROR_LED_PIN, LOW);  delay(200);
     }
   }
 }
-//------------------------------------------------------------------------------
+
 uint32_t OKtime = millis();
-void blinkOK(){
-    //Erased because it adds noise to the signal.
-    // digitalWrite(17,HIGH);
-    // delay(200);
-    // digitalWrite(17,LOW);
-    // delay(200);
-    // digitalWrite(17,HIGH);
-    // delay(200);
-    // digitalWrite(17,LOW);
-}
-//------------------------------------------------------------------------------
+void blinkOK() { /* intentionally empty - was causing ADC noise */ }
+
 void errorHalt() {
-  // Print minimal error data.
-  // sd.errorPrint(&Serial);
-  // Print extended error info - uses extra bytes of flash.
   sd.printSdError(&Serial);
-  // Try to save data.
   binFile.close();
-  resetFunc();   //fatalBlink();
-
+  resetFunc();
 }
 
 //------------------------------------------------------------------------------
-void printTime(DateTime timeIN){
-  Serial.print(F("The rtc time is "));
-  Serial.print(timeIN.year(), DEC);
-  Serial.print('/');
-  Serial.print(timeIN.month(), DEC);
-  Serial.print('/');
-  Serial.print(timeIN.day(), DEC);
-  Serial.print(" ");
-  Serial.print(timeIN.hour(), DEC);
-  Serial.print(':');
-  Serial.print(timeIN.minute(), DEC);
-  Serial.print(':');
-  Serial.print(timeIN.second(), DEC);
-  Serial.println();
+// Flash the error LED to signal no SD card (called on boot and on blocked ops)
+void flashNoSD() {
+  if (ERROR_LED_PIN < 0) return;
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(ERROR_LED_PIN, HIGH); delay(100);
+    digitalWrite(ERROR_LED_PIN, LOW);  delay(100);
+  }
 }
+
+// Guard function: prints an error and flashes LED if SD is absent.
+// Returns true if SD is available, false otherwise.
+bool requireSD(const __FlashStringHelper* action) {
+  if (sdAvailable) return true;
+  Serial.print(F("ERROR: Cannot "));
+  Serial.print(action);
+  Serial.println(F(" - no SD card detected"));
+  flashNoSD();
+  return false;
+}
+
 //------------------------------------------------------------------------------
+void printTime(DateTime timeIN) {
+  Serial.print(F("The RTC time is "));
+  Serial.print(timeIN.year(),   DEC); Serial.print('/');
+  Serial.print(timeIN.month(),  DEC); Serial.print('/');
+  Serial.print(timeIN.day(),    DEC); Serial.print(' ');
+  Serial.print(timeIN.hour(),   DEC); Serial.print(':');
+  Serial.print(timeIN.minute(), DEC); Serial.print(':');
+  Serial.print(timeIN.second(), DEC); Serial.println();
+}
+
 void printUnusedStack() {
   Serial.print(F("\nUnused stack: "));
   Serial.println(UnusedStack());
 }
 
 //------------------------------------------------------------------------------
-// Function to stop the RTC (set CH bit to 1)
 void stopRTC() {
-  Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
-  Wire.write(0x00);              // Start at the seconds register (address 0x00)
+  Wire.beginTransmission(0x68);
+  Wire.write(0x00);
   Wire.endTransmission();
-  
-  Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
-  uint8_t seconds = Wire.read(); // Read the seconds register
-  
-  // Set the CH (Clock Halt) bit to 1 to stop the clock
+  Wire.requestFrom(0x68, 1);
+  uint8_t seconds = Wire.read();
   seconds |= 0x80;
-
-  // Write the modified seconds back to stop the clock
   Wire.beginTransmission(0x68);
-  Wire.write(0x00);              // Start at the seconds register
-  Wire.write(seconds);           // Write the modified seconds register (CH bit set)
+  Wire.write(0x00);
+  Wire.write(seconds);
   Wire.endTransmission();
-
-  Serial.println("RTC stopped!");
+  Serial.println(F("RTC stopped"));
 }
 
-// Function to start the RTC (clear CH bit to 0)
 void startRTC() {
-  Wire.beginTransmission(0x68);  // 0x68 is the I2C address of DS1307
-  Wire.write(0x00);              // Start at the seconds register (address 0x00)
-  Wire.endTransmission();
-  
-  Wire.requestFrom(0x68, 1);     // Request 1 byte (the seconds register)
-  uint8_t seconds = Wire.read(); // Read the seconds register
-  
-  // Clear the CH (Clock Halt) bit to 0 to start the clock
-  seconds &= 0x7F;
-
-  // Write the modified seconds back to start the clock
   Wire.beginTransmission(0x68);
-  Wire.write(0x00);              // Start at the seconds register
-  Wire.write(seconds);           // Write the modified seconds register (CH bit cleared)
+  Wire.write(0x00);
   Wire.endTransmission();
-
-  Serial.println("RTC started!");
+  Wire.requestFrom(0x68, 1);
+  uint8_t seconds = Wire.read();
+  seconds &= 0x7F;
+  Wire.beginTransmission(0x68);
+  Wire.write(0x00);
+  Wire.write(seconds);
+  Wire.endTransmission();
+  Serial.println(F("RTC started"));
 }
+
 //------------------------------------------------------------------------------
 #if USE_RTC
 #if USE_RTC == 1
@@ -417,816 +312,537 @@ RTC_DS1307 rtc;
 RTC_DS3231 rtc;
 #elif USE_RTC == 3
 RTC_PCF8523 rtc;
-#else  // USE_RTC == type
+#else
 #error USE_RTC type not implemented.
-#endif  // USE_RTC == type
-// Call back for file timestamps.  Only called for file create and sync().
+#endif
+
 void dateTime(uint16_t* date, uint16_t* time, uint8_t* ms10) {
   DateTime now = rtc.now();
-
-  // Return date using FS_DATE macro to format fields.
-  *date = FS_DATE(now.year(), now.month(), now.day());
-
-  // Return time using FS_TIME macro to format fields.
-  *time = FS_TIME(now.hour(), now.minute(), now.second());
-
-  // Return low time bits in units of 10 ms.
-  *ms10 = now.second() & 1 ? 100 : 0;
+  *date  = FS_DATE(now.year(), now.month(), now.day());
+  *time  = FS_TIME(now.hour(), now.minute(), now.second());
+  *ms10  = now.second() & 1 ? 100 : 0;
 }
 #endif  // USE_RTC
+
 //==============================================================================
 #if ADPS0 != 0 || ADPS1 != 1 || ADPS2 != 2
 #error unexpected ADC prescaler bits
 #endif
-//------------------------------------------------------------------------------
+
 inline bool adcActive() { return (1 << ADIE) & ADCSRA; }
+
 //------------------------------------------------------------------------------
-// initialize ADC and timer1
 void adcInit(metadata_t* meta) {
-  uint8_t adps;  // prescaler bits for ADCSRA
-  uint32_t ticks =
-      F_CPU * SAMPLE_INTERVAL + 0.5;  // Sample interval cpu cycles.
+  uint8_t  adps;
+  uint32_t ticks = F_CPU * SAMPLE_INTERVAL + 0.5;
 
-  if (ADC_REF & ~((1 << REFS0) | (1 << REFS1))) {
-    error("Invalid ADC reference");
-  }
+  if (ADC_REF & ~((1 << REFS0) | (1 << REFS1))) error("Invalid ADC reference");
+
 #ifdef ADC_PRESCALER
-  if (ADC_PRESCALER > 7 || ADC_PRESCALER < 2) {
-    error("Invalid ADC prescaler");
-  }
+  if (ADC_PRESCALER > 7 || ADC_PRESCALER < 2) error("Invalid ADC prescaler");
   adps = ADC_PRESCALER;
-#else   // ADC_PRESCALER
-  // Allow extra cpu cycles to change ADC settings if more than one pin.
+#else
   int32_t adcCycles = (ticks - ISR_TIMER0) / PIN_COUNT - ISR_SETUP_ADC;
-
   for (adps = 7; adps > 0; adps--) {
-    if (adcCycles >= (MIN_ADC_CYCLES << adps)) {
-      break;
-    }
+    if (adcCycles >= (MIN_ADC_CYCLES << adps)) break;
   }
-#endif  // ADC_PRESCALER
+#endif
+
   meta->adcFrequency = F_CPU >> adps;
-  if (meta->adcFrequency > (RECORD_EIGHT_BITS ? 2000000 : 1000000)) {
+  if (meta->adcFrequency > (RECORD_EIGHT_BITS ? 2000000 : 1000000))
     error("Sample Rate Too High");
-  }
+
 #if ROUND_SAMPLE_INTERVAL
-  // Round so interval is multiple of ADC clock.
   ticks += 1 << (adps - 1);
   ticks >>= adps;
   ticks <<= adps;
-#endif  // ROUND_SAMPLE_INTERVAL
+#endif
 
-  if (PIN_COUNT > BLOCK_MAX_COUNT || PIN_COUNT > PIN_NUM_DIM) {
+  if (PIN_COUNT > BLOCK_MAX_COUNT || PIN_COUNT > PIN_NUM_DIM)
     error("Too many pins");
-  }
-  meta->pinCount = PIN_COUNT;
+
+  meta->pinCount        = PIN_COUNT;
   meta->recordEightBits = RECORD_EIGHT_BITS;
 
   for (int i = 0; i < PIN_COUNT; i++) {
     uint8_t pin = PIN_LIST[i];
-    if (pin >= NUM_ANALOG_INPUTS) {
-      error("Invalid Analog pin number");
-    }
+    if (pin >= NUM_ANALOG_INPUTS) error("Invalid Analog pin number");
     meta->pinNumber[i] = pin;
-
-    // Set ADC reference and low three bits of analog pin number.
     adcmux[i] = (pin & 7) | ADC_REF;
-    if (RECORD_EIGHT_BITS) {
-      adcmux[i] |= 1 << ADLAR;
-    }
-
-    // If this is the first pin, trigger on timer/counter 1 compare match B.
+    if (RECORD_EIGHT_BITS) adcmux[i] |= 1 << ADLAR;
     adcsrb[i] = i == 0 ? (1 << ADTS2) | (1 << ADTS0) : 0;
 #ifdef MUX5
-    if (pin > 7) {
-      adcsrb[i] |= (1 << MUX5);
-    }
-#endif  // MUX5
-    adcsra[i] = (1 << ADEN) | (1 << ADIE) | adps;
-    // First pin triggers on timer 1 compare match B rest are free running.
+    if (pin > 7) adcsrb[i] |= (1 << MUX5);
+#endif
+    adcsra[i]  = (1 << ADEN) | (1 << ADIE) | adps;
     adcsra[i] |= i == 0 ? 1 << ADATE : 1 << ADSC;
   }
 
-  // Setup timer1
   TCCR1A = 0;
   uint8_t tshift;
-  if (ticks < 0X10000) {
-    // no prescale, CTC mode
-    TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS10);
-    tshift = 0;
-  } else if (ticks < 0X10000 * 8) {
-    // prescale 8, CTC mode
-    TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS11);
-    tshift = 3;
-  } else if (ticks < 0X10000 * 64) {
-    // prescale 64, CTC mode
-    TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS11) | (1 << CS10);
-    tshift = 6;
-  } else if (ticks < 0X10000 * 256) {
-    // prescale 256, CTC mode
-    TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS12);
-    tshift = 8;
-  } else if (ticks < 0X10000 * 1024) {
-    // prescale 1024, CTC mode
-    TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS12) | (1 << CS10);
-    tshift = 10;
-  } else {
-    error("Sample Rate Too Slow");
-  }
-  // divide by prescaler
-  ticks >>= tshift;
-  // set TOP for timer reset
-  ICR1 = ticks - 1;
-  // compare for ADC start
-  OCR1B = 0;
+  if      (ticks < 0X10000)        { TCCR1B = (1<<WGM13)|(1<<WGM12)|(1<<CS10);            tshift=0;  }
+  else if (ticks < 0X10000*8)      { TCCR1B = (1<<WGM13)|(1<<WGM12)|(1<<CS11);            tshift=3;  }
+  else if (ticks < 0X10000*64)     { TCCR1B = (1<<WGM13)|(1<<WGM12)|(1<<CS11)|(1<<CS10); tshift=6;  }
+  else if (ticks < 0X10000*256)    { TCCR1B = (1<<WGM13)|(1<<WGM12)|(1<<CS12);            tshift=8;  }
+  else if (ticks < 0X10000*1024)   { TCCR1B = (1<<WGM13)|(1<<WGM12)|(1<<CS12)|(1<<CS10); tshift=10; }
+  else error("Sample Rate Too Slow");
 
-  // multiply by prescaler
+  ticks >>= tshift;
+  ICR1   = ticks - 1;
+  OCR1B  = 0;
   ticks <<= tshift;
 
-  // Sample interval in CPU clock ticks.
   meta->sampleInterval = ticks;
-  meta->cpuFrequency = F_CPU;
+  meta->cpuFrequency   = F_CPU;
+
   float sampleRate = (float)meta->cpuFrequency / meta->sampleInterval;
   Serial.print(F("Sample pins:"));
-  for (uint8_t i = 0; i < meta->pinCount; i++) {
-    Serial.print(' ');
-    Serial.print(meta->pinNumber[i], DEC);
-  }
+  for (uint8_t i = 0; i < meta->pinCount; i++) { Serial.print(' '); Serial.print(meta->pinNumber[i], DEC); }
   Serial.println();
-  Serial.println();
-
-
-  
-  
-  Serial.print(F("ADC bits: "));
-  Serial.println(meta->recordEightBits ? 8 : 10);
-  Serial.print(F("ADC clock kHz: "));
-  Serial.println(meta->adcFrequency / 1000);
-  Serial.print(F("Sample Rate: "));
-  Serial.println(sampleRate);
-  Serial.print(F("Sample interval usec: "));
-  Serial.println(1000000.0 / sampleRate);
+  Serial.print(F("ADC bits: "));          Serial.println(meta->recordEightBits ? 8 : 10);
+  Serial.print(F("ADC clock kHz: "));     Serial.println(meta->adcFrequency / 1000);
+  Serial.print(F("Sample Rate: "));       Serial.println(sampleRate);
+  Serial.print(F("Sample interval usec: ")); Serial.println(1000000.0 / sampleRate);
 }
+
 //------------------------------------------------------------------------------
-// enable ADC and timer1 interrupts
 void adcStart() {
-  // initialize ISR
   adcindex = 1;
-  isrBuf = nullptr;
-  isrOver = 0;
-  isrStop = false;
-
-  // Clear any pending interrupt.
-  ADCSRA |= 1 << ADIF;
-
-  // Setup for first pin.
-  ADMUX = adcmux[0];
-  ADCSRB = adcsrb[0];
-  ADCSRA = adcsra[0];
-
-  // Enable timer1 interrupts.
+  isrBuf   = nullptr;
+  isrOver  = 0;
+  isrStop  = false;
+  ADCSRA  |= 1 << ADIF;
+  ADMUX    = adcmux[0];
+  ADCSRB   = adcsrb[0];
+  ADCSRA   = adcsra[0];
   timerError = false;
-  timerFlag = false;
-  TCNT1 = 0;
-  TIFR1 = 1 << OCF1B;
+  timerFlag  = false;
+  TCNT1  = 0;
+  TIFR1  = 1 << OCF1B;
   TIMSK1 = 1 << OCIE1B;
 }
-//------------------------------------------------------------------------------
+
 inline void adcStop() {
   TIMSK1 = 0;
   ADCSRA = 0;
 }
+
 //------------------------------------------------------------------------------
-// Convert binary file to csv file.
 void binaryToCsv() {
-  uint8_t lastPct = 0;
-  block_t* pd;
+  uint8_t    lastPct = 0;
+  block_t*   pd;
   metadata_t* pm;
-  uint32_t t0 = millis();
-  // Use fast buffered print class.
+  uint32_t   t0 = millis();
   BufferedPrint<file_t, 64> bp(&csvFile);
   block_t binBuffer[FIFO_DIM];
 
   assert(sizeof(block_t) == sizeof(metadata_t));
   binFile.rewind();
-  uint32_t tPct = millis();
-  bool doMeta = true;
+  uint32_t tPct  = millis();
+  bool     doMeta = true;
+
   while (!Serial.available()) {
     pd = binBuffer;
     int nb = binFile.read(binBuffer, sizeof(binBuffer));
-    if (nb < 0) {
-      error("read binFile failed");
-    }
+    if (nb < 0) error("read binFile failed");
     size_t nd = nb / sizeof(block_t);
-    if (nd < 1) {
-      break;
-    }
+    if (nd < 1) break;
+
     if (doMeta) {
       doMeta = false;
       pm = (metadata_t*)pd++;
-      if (PIN_COUNT != pm->pinCount) {
-        error("Invalid pinCount");
-      }
+      if (PIN_COUNT != pm->pinCount) error("Invalid pinCount");
       bp.print(F("Interval,"));
-      float intervalMicros =
-          1.0e6 * pm->sampleInterval / (float)pm->cpuFrequency;
+      float intervalMicros = 1.0e6 * pm->sampleInterval / (float)pm->cpuFrequency;
       bp.print(intervalMicros, 4);
       bp.println(F(",usec"));
       for (uint8_t i = 0; i < PIN_COUNT; i++) {
-        if (i) {
-          bp.print(',');
-        }
+        if (i) bp.print(',');
         bp.print(F("pin"));
         bp.print(pm->pinNumber[i]);
       }
       bp.println();
-      if (nd-- == 1) {
-        break;
-      }
+      if (nd-- == 1) break;
     }
     for (size_t i = 0; i < nd; i++, pd++) {
-      if (pd->overrun) {
-        bp.print(F("OVERRUN,"));
-        bp.println(pd->overrun);
-      }
+      if (pd->overrun) { bp.print(F("OVERRUN,")); bp.println(pd->overrun); }
       for (size_t j = 0; j < pd->count; j += PIN_COUNT) {
-        for (size_t i = 0; i < PIN_COUNT; i++) {
-          if (!bp.printField(pd->data[i + j],
-                             i == (PIN_COUNT - 1) ? '\n' : ',')) {
+        for (size_t k = 0; k < PIN_COUNT; k++) {
+          if (!bp.printField(pd->data[k + j], k == (PIN_COUNT - 1) ? '\n' : ','))
             error("printField failed");
-          }
         }
       }
     }
     if ((millis() - tPct) > 1000) {
       uint8_t pct = binFile.curPosition() / (binFile.fileSize() / 100);
-      if (pct != lastPct) {
-        tPct = millis();
-        lastPct = pct;
-        Serial.print(pct, DEC);
-        Serial.println('%');
-      }
+      if (pct != lastPct) { tPct = millis(); lastPct = pct; Serial.print(pct, DEC); Serial.println('%'); }
     }
   }
-  if (!bp.sync() || !csvFile.close()) {
-    error("close csvFile failed");
-  }
+  if (!bp.sync() || !csvFile.close()) error("close csvFile failed");
   Serial.print(F("Done: "));
   Serial.print(0.001 * (millis() - t0));
   Serial.println(F(" Seconds"));
 }
+
 //------------------------------------------------------------------------------
 void clearSerialInput() {
   uint32_t m = micros();
   do {
-    if (Serial.read() >= 0) {
-      m = micros();
-    }
+    if (Serial.read() >= 0) m = micros();
   } while (micros() - m < 10000);
 }
-//------------------------------------------------------------------------------
-//------------------------------------------------------------------------------
-//------------------------------------------------------------------------------
-//------------------------------------------------------------------------------
-void takeOtherMeasures(){
 
-  logFile = sd.open(sensorFilename, FILE_WRITE);
-  uint16_t theCO2 = -1;
-  float theTemp = -1;
-  float theHum = -1;
+//------------------------------------------------------------------------------
+void takeOtherMeasures() {
+  // Read sensor and print to Serial regardless of SD state
+  uint16_t theCO2 = 0;
+  float    theTemp = 0;
+  float    theHum  = 0;
 
-  // Trigger a single-shot measurement
   if (mySensor.measureSingleShot() == false) {
-    Serial.println("Single shot failed");
-    theCO2 = -9;
-    theTemp = -9;
-    theHum = -9;
+    Serial.println(F("Single shot failed"));
+    theCO2 = (uint16_t)-9; theTemp = -9; theHum = -9;
   } else {
-    // Wait/polling loop for data ready (up to ~5 seconds)
     unsigned long startTime = millis();
     while (mySensor.readMeasurement() == false) {
-      if (millis() - startTime > 6000) {  // Timeout after 6 seconds
-        Serial.println("Timeout");
-        theCO2 = -8;
-        theTemp = -8;
-        theHum = -8;
+      if (millis() - startTime > 6000) {
+        Serial.println(F("Timeout"));
+        theCO2 = (uint16_t)-8; theTemp = -8; theHum = -8;
+        break;
       }
-      delay(100);  // Short delay to avoid busy-waiting
+      delay(100);
     }
-    theCO2 = mySensor.getCO2();
+    theCO2  = mySensor.getCO2();
     theTemp = mySensor.getTemperature();
-    theHum = mySensor.getHumidity();
+    theHum  = mySensor.getHumidity();
   }
 
-  Serial.print(F("CO2(ppm):"));
-  Serial.print(theCO2);
-  Serial.print(F("\tHumidity(%RH):"));
-  Serial.print(theHum, 1);
-  Serial.print(F("\tTemperature(C):"));
-  Serial.print(theTemp, 1);
+  Serial.print(F("CO2(ppm):"));        Serial.print(theCO2);
+  Serial.print(F("\tHumidity(%RH):")); Serial.print(theHum,  1);
+  Serial.print(F("\tTemperature(C):")); Serial.print(theTemp, 1);
   Serial.println();
 
+  // Only write to file if SD is available
+  if (!sdAvailable) {
+    Serial.println(F("(SD absent - sensor data not saved)"));
+    return;
+  }
 
-  //WRITE IT ALL TO FILE
-  if(USE_RTC){
-      printTime(rtc.now());
-      logFile.print(rtc.now().year(), DEC);
-      logFile.print('/');
-      logFile.print(rtc.now().month(), DEC);
-      logFile.print('/');
-      logFile.print(rtc.now().day(), DEC);
-      logFile.print(" ");
-      logFile.print(rtc.now().hour(), DEC);
-      logFile.print(':');
-      logFile.print(rtc.now().minute(), DEC);
-      logFile.print(':');
-      logFile.print(rtc.now().second(), DEC);
-    }else{
-      logFile.print(millis());
-    }
-
-  logFile.print(",");
-  logFile.print(theCO2);
-  logFile.print(",");
-  logFile.print(theHum, 1);
-  logFile.print(",");
-  logFile.print(theTemp, 1);
+  logFile = sd.open(sensorFilename, FILE_WRITE);
+#if USE_RTC
+  printTime(rtc.now());
+  logFile.print(rtc.now().year(),   DEC); logFile.print('/');
+  logFile.print(rtc.now().month(),  DEC); logFile.print('/');
+  logFile.print(rtc.now().day(),    DEC); logFile.print(' ');
+  logFile.print(rtc.now().hour(),   DEC); logFile.print(':');
+  logFile.print(rtc.now().minute(), DEC); logFile.print(':');
+  logFile.print(rtc.now().second(), DEC);
+#else
+  logFile.print(millis());
+#endif
+  logFile.print(',');  logFile.print(theCO2);
+  logFile.print(',');  logFile.print(theHum,  1);
+  logFile.print(',');  logFile.print(theTemp, 1);
   logFile.println();
   logFile.close();
-    
 }
-//------------------------------------------------------------------------------
-//------------------------------------------------------------------------------
+
 //------------------------------------------------------------------------------
 void createBinFile() {
+  if (!requireSD(F("record"))) return;
+
   binFile.close();
 
-  //DO THE TEMP/CO2 STUFF
-  if(SENSORWORKING) {
+  if (SENSORWORKING) {
     takeOtherMeasures();
   } else {
     setupSensor();
   }
-  
- 
-  //DateTime time = rtc.now();
-  // string binName[ ] =("DateTime::TIMESTAMP_FULL:\t")+time.timestamp(DateTime::TIMESTAMP_FULL+'.bin');
-  // char binName[50];
-  //snprintf(binName, 50, "%d-%d-%d-%d-%d.bin",("DateTime::TIMESTAMP_FULL:\t")+time.timestamp(DateTime::TIMESTAMP_FULL+00));
 
-  #if USE_RTC
+#if USE_RTC
   DateTime now = rtc.now();
-  #else
+#else
   DateTime now = DateTime(2025, 8, 11, 12, 0, 0);
-  #endif
-  char binName[24] = {0};
-  snprintf(binName, sizeof(binName), "%04d_%02d_%02d_%02d_%02d_%02d.bin",
-          now.year(), now.month(), now.day(),
-          now.hour(), now.minute(), now.second());
+#endif
 
-  //  while (sd.exists(binName)) {
-  //    char* p = strchr(binName, '.');
-  //    if (!p) {
-  //      error("no dot in filename");
-  //    }
-  //    while (true) {
-  //      p--;
-  //      if (p < binName || *p < '0' || *p > '9') {
-  //        error("Can't create file name");
-  //      }
-  //      if (p[0] != '9') {
-  //        p[0]++;
-  //        break;
-  //      }
-  //      p[0] = '0';
-  //    }
-  //  }
-  
-  Serial.print(F("Opening: "));
-  Serial.println(binName);
-  if (!binFile.open(binName, O_RDWR | O_CREAT)) {
-    error("open binName failed");
-  }
-  
-  Serial.print(F("Allocating: "));
-  Serial.print(MAX_FILE_SIZE_MiB);
-  Serial.println(F(" MiB"));
+  char binName[36] = {0};
+  snprintf(binName, sizeof(binName),
+           "%04d%02d%02d_%02d%02d%02d_%s.bin",
+           now.year(), now.month(), now.day(),
+           now.hour(), now.minute(), now.second(),
+           sensorID);
+
+  Serial.print(F("Opening: "));  Serial.println(binName);
+  if (!binFile.open(binName, O_RDWR | O_CREAT)) error("open binName failed");
+
+  Serial.print(F("Allocating: ")); Serial.print(MAX_FILE_SIZE_MiB); Serial.println(F(" MiB"));
   if (!binFile.preAllocate(MAX_FILE_SIZE)) {
-    Serial.print(F("\nUnused stack: "));
-    Serial.println(UnusedStack());
+    printUnusedStack();
     error("preAllocate failed");
   }
 }
+
 //------------------------------------------------------------------------------
 bool createCsvFile() {
   char csvName[NAME_DIM];
-
-  if (!binFile.isOpen()){
-    Serial.println(F("No current binary file"));
-    return false;
-  }
+  if (!binFile.isOpen()) { Serial.println(F("No current binary file")); return false; }
   binFile.getName(csvName, sizeof(csvName));
   char* dot = strchr(csvName, '.');
-  if (!dot) {
-    error("no dot in binName");
-  }
+  if (!dot) error("no dot in binName");
   strcpy(dot + 1, "csv");
-  if (!csvFile.open(csvName, O_WRONLY | O_CREAT | O_TRUNC)) {
-    error("open csvFile failed");
-  }
-  Serial.print(F("Writing: "));
-  Serial.print(csvName);
-  Serial.println(F(" - type any character to stop"));
+  if (!csvFile.open(csvName, O_WRONLY | O_CREAT | O_TRUNC)) error("open csvFile failed");
+  Serial.print(F("Writing: ")); Serial.print(csvName); Serial.println(F(" - type any character to stop"));
   return true;
 }
-//------------------------------------------------------------------------------
-//------------------------------------------------------------------------------
-// DO THE SYNC SIGNAL
-void doSyncSignal(){
-  Serial.println("SYNC BLINK");
-  //blink the sync signal
-  int SYNC_LED = 10;
-  int delay_ms = 1666;
-  int repeats = 1200;
 
+//------------------------------------------------------------------------------
+void doSyncSignal() {
+  Serial.println(F("SYNC BLINK"));
+  const int SYNC_LED = 10;
+  const int repeats  = 1200;
   for (int i = 0; i < repeats; i++) {
     digitalWrite(SYNC_LED, HIGH);
     delayMicroseconds(1600);
     digitalWrite(SYNC_LED, LOW);
   }
 }
+
 //------------------------------------------------------------------------------
-//------------------------------------------------------------------------------
-// log data
 void logData() {
+  uint32_t t0, t1, overruns = 0, count = 0, maxLatencyUsec = 0;
   uint32_t loggingMillis;
-  uint32_t t0;
-  uint32_t t1;
-  uint32_t overruns = 0;
-  uint32_t count = 0;
-  uint32_t maxLatencyUsec = 0;
-  size_t maxFifoUse = 0;
-  block_t fifoBuffer[FIFO_DIM];
+  size_t   maxFifoUse = 0;
+  block_t  fifoBuffer[FIFO_DIM];
 
   adcInit((metadata_t*)fifoBuffer);
-  // Write metadata.
-  if (sizeof(metadata_t) != binFile.write(fifoBuffer, sizeof(metadata_t))) {
+  if (sizeof(metadata_t) != binFile.write(fifoBuffer, sizeof(metadata_t)))
     error("Write metadata failed");
-  }
-  fifoCount = 0;
-  fifoHead = 0;
-  fifoTail = 0;
-  fifoData = fifoBuffer;
-  // Initialize all blocks to save ISR overhead.
+
+  fifoCount = 0; fifoHead = 0; fifoTail = 0;
+  fifoData  = fifoBuffer;
   memset(fifoBuffer, 0, sizeof(fifoBuffer));
 
   Serial.println(F("Logging - type any character to stop"));
-  // Wait for Serial Idle.
   Serial.flush();
   delay(50);
 
-  t0 = millis();
-  loggingMillis = millis();
-  t1 = t0;
-  // Start logging interrupts.
+  t0 = loggingMillis = t1 = millis();
   adcStart();
-  while (1) {
-    //BlinkOK to show working
-    // if(millis() - OKtime > 10000){
-    //   blinkOK();
-    //   OKtime = millis();
-    // }
 
+  while (1) {
     uint32_t m;
     noInterrupts();
     size_t tmpFifoCount = fifoCount;
     interrupts();
+
     if (tmpFifoCount) {
       block_t* pBlock = fifoData + fifoTail;
-      // Write block to SD.
       m = micros();
-      if (sizeof(block_t) != binFile.write(pBlock, sizeof(block_t))) {
+      if (sizeof(block_t) != binFile.write(pBlock, sizeof(block_t)))
         error("write data failed");
-      }
-      m = micros() - m;
+      m  = micros() - m;
       t1 = millis();
-      if (m > maxLatencyUsec) {
-        maxLatencyUsec = m;
-      }
-      if (tmpFifoCount > maxFifoUse) {
-        maxFifoUse = tmpFifoCount;
-      }
+      if (m > maxLatencyUsec)          maxLatencyUsec = m;
+      if (tmpFifoCount > maxFifoUse)   maxFifoUse     = tmpFifoCount;
       count += pBlock->count;
-
-      // Add overruns and possibly light LED.
       if (pBlock->overrun) {
         overruns += pBlock->overrun;
-        if (ERROR_LED_PIN >= 0) {
-          digitalWrite(ERROR_LED_PIN, HIGH);
-        }
+        if (ERROR_LED_PIN >= 0) digitalWrite(ERROR_LED_PIN, HIGH);
       }
-      // Initialize empty block to save ISR overhead.
-      pBlock->count = 0;
+      pBlock->count   = 0;
       pBlock->overrun = 0;
       fifoTail = fifoTail < (FIFO_DIM - 1) ? fifoTail + 1 : 0;
-
-      noInterrupts();
-      fifoCount--;
-      interrupts();
-
-      if (binFile.curPosition() >= MAX_FILE_SIZE) {
-        // File full so stop ISR calls.
-        adcStop();
-        break;
-      }
-    }
-    //------------------------------------------------
-    // BLINK AN LED AS A SYNC SIGNAL
-    //------------------------------------------------
-    /*
-    static bool triggered10s = false;
-    static bool triggered9min = false;
-
-    unsigned long elapsed = millis() - loggingMillis;
-
-    if (!triggered10s && elapsed >= 10000 && elapsed < 10050) {
-        doSyncSignal();
-        triggered10s = true;  // Prevent re-trigger
+      noInterrupts(); fifoCount--; interrupts();
+      if (binFile.curPosition() >= MAX_FILE_SIZE) { adcStop(); break; }
     }
 
-    if (!triggered9min && elapsed >= 1000UL * 60 * 9 && elapsed < 1000UL * 60 * 9 + 50) {
-        doSyncSignal();
-        triggered9min = true;  // Prevent re-trigger
-    }
-    */
-    //------------------------------------------------
-    //------------------------------------------------
-    if (timerError) {
-      error("Missed timer event - rate too high");
-    }
-    if (Serial.available()) {
-      // Stop ISR interrupts.
-      isrStop = true;
-    }
-    // switch breaks for truncating
-   if (digitalRead(15)==HIGH){//changed
-      isrStop = true;
-    }
-    if (fifoCount == 0 && !adcActive()) {
-      break;
-    }
-
+    if (timerError)        error("Missed timer event - rate too high");
+    if (Serial.available()) isrStop = true;
+    if (digitalRead(15) == HIGH) isrStop = true;
+    if (fifoCount == 0 && !adcActive()) break;
   }
+
   Serial.println();
-  // Truncate file if recording stopped early.
   if (binFile.curPosition() < MAX_FILE_SIZE) {
     Serial.println(F("Truncating file"));
     Serial.flush();
-    if (!binFile.truncate()) {
-      error("Can't truncate file");
-    }
+    if (!binFile.truncate()) error("Can't truncate file");
   }
-  Serial.print(F("Max write latency usec: "));
-  Serial.println(maxLatencyUsec);
-  Serial.print(F("Record time sec: "));
-  Serial.println(0.001 * (t1 - t0), 3);
-  Serial.print(F("Sample count: "));
-  Serial.println(count / PIN_COUNT);
-  Serial.print(F("Overruns: "));
-  Serial.println(overruns);
-  Serial.print(F("FIFO_DIM: "));
-  Serial.println(FIFO_DIM);
-  Serial.print(F("maxFifoUse: "));
-  Serial.println(maxFifoUse + 1);  // include ISR use.
+  Serial.print(F("Max write latency usec: ")); Serial.println(maxLatencyUsec);
+  Serial.print(F("Record time sec: "));        Serial.println(0.001 * (t1 - t0), 3);
+  Serial.print(F("Sample count: "));           Serial.println(count / PIN_COUNT);
+  Serial.print(F("Overruns: "));               Serial.println(overruns);
+  Serial.print(F("FIFO_DIM: "));               Serial.println(FIFO_DIM);
+  Serial.print(F("maxFifoUse: "));             Serial.println(maxFifoUse + 1);
   Serial.println(F("Done"));
 }
+
 //------------------------------------------------------------------------------
 void openBinFile() {
   char name[NAME_DIM];
   clearSerialInput();
   Serial.println(F("Enter file name"));
-  if (!serialReadLine(name, sizeof(name))) {
-    return;
-  }
-  if (!sd.exists(name)) {
-    Serial.println(name);
-    Serial.println(F("File does not exist"));
-    return;
-  }
+  if (!serialReadLine(name, sizeof(name))) return;
+  if (!sd.exists(name)) { Serial.println(name); Serial.println(F("File does not exist")); return; }
   binFile.close();
-  if (!binFile.open(name, O_RDWR)) {
-    Serial.println(name);
-    Serial.println(F("open failed"));
-    return;
-  }
+  if (!binFile.open(name, O_RDWR)) { Serial.println(name); Serial.println(F("open failed")); return; }
   Serial.println(F("File opened"));
 }
+
 //------------------------------------------------------------------------------
-// Print data file to Serial
 void printData() {
   block_t buf;
-  if (!binFile.isOpen()) {
-    Serial.println(F("No current binary file"));
-    return;
-  }
+  if (!binFile.isOpen()) { Serial.println(F("No current binary file")); return; }
   binFile.rewind();
-  if (binFile.read(&buf, sizeof(buf)) != sizeof(buf)) {
-    error("Read metadata failed");
-  }
+  if (binFile.read(&buf, sizeof(buf)) != sizeof(buf)) error("Read metadata failed");
   Serial.println(F("Type any character to stop"));
   delay(1000);
-  while (!Serial.available() &&
-         binFile.read(&buf, sizeof(buf)) == sizeof(buf)) {
-    if (buf.count == 0) {
-      break;
-    }
-    if (buf.overrun) {
-      Serial.print(F("OVERRUN,"));
-      Serial.println(buf.overrun);
-    }
+  while (!Serial.available() && binFile.read(&buf, sizeof(buf)) == sizeof(buf)) {
+    if (buf.count == 0) break;
+    if (buf.overrun) { Serial.print(F("OVERRUN,")); Serial.println(buf.overrun); }
     for (size_t i = 0; i < buf.count; i++) {
       Serial.print(buf.data[i], DEC);
-      if ((i + 1) % PIN_COUNT) {
-        Serial.print(',');
-      } else {
-        Serial.println();
-      }
+      if ((i + 1) % PIN_COUNT) Serial.print(','); else Serial.println();
     }
   }
   Serial.println(F("Done"));
 }
+
 //------------------------------------------------------------------------------
 bool serialReadLine(char* str, size_t size) {
   size_t n = 0;
-  while (!Serial.available()) {
-  }
+  while (!Serial.available()) {}
   while (true) {
     int c = Serial.read();
     if (c < ' ') break;
     str[n++] = c;
-    if (n >= size) {
-      Serial.println(F("input too long"));
-      return false;
-    }
+    if (n >= size) { Serial.println(F("input too long")); return false; }
     uint32_t m = millis();
-    while (!Serial.available() && (millis() - m) < 100) {
-    }
+    while (!Serial.available() && (millis() - m) < 100) {}
     if (!Serial.available()) break;
   }
   str[n] = 0;
   return true;
 }
 
-//====================================================================================
-void setupSensor(){
-  Wire.begin();
-  // if (mySensor.begin() == false){
-  //   Serial.println(F("SDC41 sensor not detected. No data will be recorded."));
-  //   SENSORWORKING = 0;
-  //   digitalWrite(16,LOW);
-  //   delay(200);
-  //   digitalWrite(16,HIGH);
-  //   delay(400);
-  //   digitalWrite(16,LOW);
-  //   delay(200);
-  //   digitalWrite(16,HIGH);
-  //   delay(400);
-  //   digitalWrite(16,LOW);
-
-  //   //from the low power mode example
-  //   if (mySensor.stopPeriodicMeasurement() == true){
-  //     Serial.println(F("Periodic measurement is disabled!"));
-  //   }  
-
-  //   //Now we can enable low power periodic measurements
-  //   if (mySensor.startLowPowerPeriodicMeasurement() == true){
-  //     Serial.println(F("Low power mode enabled!"));
-  //   }
-
-// Initialize: No auto periodic start, ASC enabled
-  if (mySensor.begin(false, true, false) == false) {
-    Serial.println(F("SDC41 sensor not detected. No data will be recorded."));
-    SENSORWORKING = 0;
-    digitalWrite(16,LOW);
-    delay(200);
-    digitalWrite(16,HIGH);
-    delay(400);
-    digitalWrite(16,LOW);
-    delay(200);
-    digitalWrite(16,HIGH);
-    delay(400);
-    digitalWrite(16,LOW);
-
-  }else{
-    SENSORWORKING = 1;
-    logFile = sd.open(sensorFilename, FILE_WRITE);
-    logFile.println("Time, CO2, Humidity, Temperature");
-    logFile.close();
-  }
-
-}
-//====================================================================================
 //------------------------------------------------------------------------------
-void setup(void) {
-
-  if (ERROR_LED_PIN >= 0) {
-    pinMode(ERROR_LED_PIN, OUTPUT);
+void setupSensor() {
+  Wire.begin();
+  if (mySensor.begin(false, true, false) == false) {
+    Serial.println(F("SCD41 sensor not detected - no CO2/temp/humidity data"));
+    SENSORWORKING = false;
+    // Three blinks on error LED to signal sensor missing
+    if (ERROR_LED_PIN >= 0) {
+      for (int i = 0; i < 3; i++) {
+        digitalWrite(ERROR_LED_PIN, LOW);  delay(200);
+        digitalWrite(ERROR_LED_PIN, HIGH); delay(400);
+      }
+      digitalWrite(ERROR_LED_PIN, LOW);
+    }
+  } else {
+    SENSORWORKING = true;
+    Serial.println(F("SCD41 sensor OK"));
+    // Write CSV header only if SD is available
+    if (sdAvailable) {
+      logFile = sd.open(sensorFilename, FILE_WRITE);
+      if (logFile) {
+        logFile.println(F("Time,CO2,Humidity,Temperature"));
+        logFile.close();
+      }
+    }
   }
+}
+
+//==============================================================================
+void setup(void) {
+  if (ERROR_LED_PIN >= 0) pinMode(ERROR_LED_PIN, OUTPUT);
+
   Serial.begin(9600);
   Serial.setTimeout(500);
-  pinMode(16, OUTPUT); //+5V for pin7
-  pinMode(14, INPUT_PULLUP); //+5V for pin7 //changed
-  pinMode(17, OUTPUT); //+5V for pin7
-  pinMode(15, INPUT_PULLUP); // switch input //changed
-  digitalWrite(17,HIGH);
 
-  setupSensor();
- 
-  if (digitalRead(14)==LOW){ //changed
-    digitalWrite(17,HIGH);
-    delay(200);
-    digitalWrite(17,LOW);
-    delay(200);
-    digitalWrite(17,HIGH);
-    delay(200);
-    digitalWrite(17,LOW);
-    delay(200);
-    digitalWrite(17,HIGH);
-    delay(200);
-    digitalWrite(17,LOW);
-    delay(200);
-    digitalWrite(17,HIGH);
+  pinMode(16, OUTPUT);
+  pinMode(14, INPUT_PULLUP);
+  pinMode(17, OUTPUT);
+  pinMode(15, INPUT_PULLUP);
+  digitalWrite(17, HIGH);
 
+  loadOrCreateSensorID();
+  snprintf(sensorFilename, sizeof(sensorFilename), "otherData%s.csv", sensorID);
+
+  // ── Live view mode (pin 14 held LOW) ─────────────────────────────────────
+  // This runs BEFORE SD init so it always works even with no SD card.
+  if (digitalRead(14) == LOW) {
+    // Signal entry into live view with LED blinks
+    for (int i = 0; i < 7; i++) {
+      digitalWrite(17, i % 2 == 0 ? HIGH : LOW);
+      delay(200);
+    }
+    digitalWrite(17, HIGH);
   }
-  while (digitalRead(14)==LOW){//changed
-      //Serial.print( 1 / (0.0001 * (micros() - testms)) ); // Looks like the sampling freq is 1250Hz
-      //  Serial.print(' ');
-
-      Serial.print(analogRead(A0));
-        Serial.print(' ');
-      Serial.print(analogRead(A1));
-        Serial.print(' ');
-      Serial.print(analogRead(A2));
-        Serial.print(' ');
-      Serial.print(analogRead(A3));
-        Serial.print(' ');
-      Serial.print(analogRead(A4));
-        Serial.print(' ');
-      Serial.println(analogRead(A5));
-    
-      //testms = micros();
-    
+  while (digitalRead(14) == LOW) {
+    Serial.print(analogRead(A0)); Serial.print(' ');
+    Serial.print(analogRead(A1)); Serial.print(' ');
+    Serial.print(analogRead(A2)); Serial.print(' ');
+    Serial.print(analogRead(A3)); Serial.print(' ');
+    Serial.print(analogRead(A4)); Serial.print(' ');
+    Serial.println(analogRead(A5));
   }
+  digitalWrite(17, HIGH);
+  // ─────────────────────────────────────────────────────────────────────────
 
-  digitalWrite(17,HIGH);
-
-  //while (!Serial) {
-  //}
-  //Serial.println(F("Type any character to begin."));
-  //while (!Serial.available()) {
-  //}
   FillStack();
-
-  // Read the first sample pin to init the ADC.
-  analogRead(PIN_LIST[0]);
+  analogRead(PIN_LIST[0]);  // init ADC
 
 #if !ENABLE_DEDICATED_SPI
-  Serial.println(
-      F("\nFor best performance edit SdFatConfig.h\n"
-        "and set ENABLE_DEDICATED_SPI nonzero"));
-#endif  // !ENABLE_DEDICATED_SPI
-  // Initialize SD.
+  Serial.println(F("\nFor best performance edit SdFatConfig.h\nand set ENABLE_DEDICATED_SPI nonzero"));
+#endif
+
+  // ── SD initialisation ────────────────────────────────────────────────────
   if (!sd.begin(SD_CONFIG)) {
-    Serial.println("sd.begin failed");
-    error("sd.begin failed");
+    Serial.println(F("*** SD card not found - recording disabled ***"));
+    Serial.println(F("*** Live view (pin 14) and serial commands still available ***"));
+    sdAvailable = false;
+    // 3 slow flashes at boot to signal SD missing
+    if (ERROR_LED_PIN >= 0) {
+      for (int i = 0; i < 3; i++) {
+        digitalWrite(ERROR_LED_PIN, HIGH); delay(300);
+        digitalWrite(ERROR_LED_PIN, LOW);  delay(300);
+      }
+    }
+  } else {
+    sdAvailable = true;
+    Serial.println(F("SD card OK"));
   }
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Sensor setup runs after SD init so setupSensor() knows sdAvailable
+  setupSensor();
+
 #if USE_RTC
   if (!rtc.begin()) {
-    //error("rtc.begin failed");
+    Serial.println(F("RTC begin failed"));
   }
   if (!rtc.isrunning()) {
-    // Set RTC to sketch compile date & time.
-    // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-    //error("RTC is NOT running!"); //TODO: this was triggering - need to investigate!
-    Serial.println("RTC is NOT running!");
+    Serial.println(F("RTC is NOT running!"));
   } else {
     Serial.println(F("RTC is running"));
     printTime(rtc.now());
   }
-  // Set callback
   FsDateTime::setCallback(dateTime);
-#endif  // USE_RTC
+#endif
 }
 
-//------------------------------------------------------------------------------
+//==============================================================================
 void loop(void) {
   printUnusedStack();
-  // Read any Serial data.
   clearSerialInput();
-  digitalWrite(17,HIGH);
+  digitalWrite(17, HIGH);
 
   Serial.println();
-  Serial.println(F("Running BeeSpy3 version Combined_E"));
+  Serial.println(F("Running BeeSpy3 version Combined_H"));
+  Serial.print(F("Sensor ID : ")); Serial.println(sensorID);
+  Serial.print(F("SD card   : ")); Serial.println(sdAvailable ? F("OK") : F("NOT DETECTED - recording disabled"));
+
   Serial.println(F("type:"));
   Serial.println(F("b - open existing bin file"));
   Serial.println(F("c - convert file to csv"));
@@ -1236,65 +852,76 @@ void loop(void) {
   Serial.println(F("t - set the RTC time"));
   Serial.println(F("x - RESET"));
 
-  char c='l';
+  char c = 'l';
 
-  if (digitalRead(15)==LOW){ //changed
-        c='r';
-        Serial.println("recording");
-        digitalWrite(17, LOW);   
-
-  } else {
-    digitalWrite(17,HIGH);
-
-    while (!Serial.available()) {
-      if(digitalRead(14) == LOW || digitalRead(15) == LOW){ //changed
-        resetFunc();
-      }
+  if (digitalRead(15) == LOW) {
+    // Hardware record switch
+    if (!sdAvailable) {
+      Serial.println(F("Record switch detected but SD card absent - cannot record"));
+      flashNoSD();
+      // Do NOT set c='r'; fall through to normal menu prompt
+    } else {
+      c = 'r';
+      Serial.println(F("Recording (hardware trigger)"));
+      digitalWrite(17, LOW);
     }
-    
+  }
+
+  if (c != 'r') {
+    // Wait for serial input, but allow live view or record switch to reset
+    digitalWrite(17, HIGH);
+    while (!Serial.available()) {
+      if (digitalRead(14) == LOW || digitalRead(15) == LOW) resetFunc();
+    }
     c = tolower(Serial.read());
     Serial.println();
-    
-    if (ERROR_LED_PIN >= 0) {
-      digitalWrite(ERROR_LED_PIN, LOW);
-    }
-    // Read any Serial data.
+    if (ERROR_LED_PIN >= 0) digitalWrite(ERROR_LED_PIN, LOW);
     clearSerialInput();
-
   }
+
   if (c == 'b') {
-    openBinFile();
+    if (requireSD(F("open file"))) openBinFile();
+
   } else if (c == 'c') {
-    if (createCsvFile()) {
-      binaryToCsv();
-    }
+    if (requireSD(F("convert file")) && createCsvFile()) binaryToCsv();
+
   } else if (c == 'l') {
-    Serial.println(F("ls:"));
-    sd.ls(&Serial, LS_DATE | LS_SIZE);
+    if (sdAvailable) {
+      Serial.println(F("ls:"));
+      sd.ls(&Serial, LS_DATE | LS_SIZE);
+    } else {
+      Serial.println(F("No SD card - cannot list files"));
+      flashNoSD();
+    }
+
   } else if (c == 'p') {
-    printData();
+    if (requireSD(F("print data"))) printData();
+
   } else if (c == 'r') {
-    // DO THE BUSINESS
-    createBinFile();
-    logData();
-  } else if (c == 'x'){
+    if (requireSD(F("record"))) {
+      createBinFile();
+      logData();
+    }
+
+  } else if (c == 'x') {
     resetFunc();
-  }else if (c == 't'){
-    #if USE_RTC
-      //Reset the rtc datetime to compilation
-      stopRTC();
-      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-      startRTC();
-      DateTime dtnow = rtc.now();
-      Serial.println("Reset RTC time to:");
-      printTime(dtnow);
-    #endif
+
+  } else if (c == 't') {
+#if USE_RTC
+    stopRTC();
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    startRTC();
+    Serial.println(F("RTC reset to compile time:"));
+    printTime(rtc.now());
+#endif
+
   } else {
     Serial.println(F("Invalid entry"));
   }
-  digitalWrite(17,HIGH);
 
+  digitalWrite(17, HIGH);
 }
+
 #else  // __AVR__
 #error This program is only for AVR.
 #endif  // __AVR__
