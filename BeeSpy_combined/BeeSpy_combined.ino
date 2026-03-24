@@ -1,5 +1,5 @@
 /**
- * BeeSpy3 - Combined version H
+ * BeeSpy3 - Combined_H
  * ADC data logger with SCD41 CO2/temp/humidity sensor.
  *
  * If no SD card is detected at startup, the device will still allow
@@ -30,7 +30,7 @@ const float SAMPLE_RATE = 5000;  // Must be 0.25 or greater.
 // Maximum file size in bytes.
 const uint32_t MAX_FILE_SIZE_MiB = 18;  // 36MB is ~10 min at 5kHz/6ch
 // Unique value per physical device - stored in EEPROM, used in filenames
-char sensorID[9];
+char readerID[9];
 //------------------------------------------------------------------------------
 
 uint32_t compileHash() {
@@ -42,9 +42,9 @@ uint32_t compileHash() {
     return h;
 }
 
-void loadOrCreateSensorID() {
+void loadOrCreatereaderID() {
     uint32_t h = compileHash();
-    snprintf(sensorID, sizeof(sensorID), "%08lX", h);
+    snprintf(readerID, sizeof(readerID), "%08lX", h);
 }
 
 //------------------------------------------------------------------------------
@@ -570,7 +570,7 @@ void createBinFile() {
            "%04d%02d%02d_%02d%02d%02d_%s.bin",
            now.year(), now.month(), now.day(),
            now.hour(), now.minute(), now.second(),
-           sensorID);
+           readerID);
 
   Serial.print(F("Opening: "));  Serial.println(binName);
   if (!binFile.open(binName, O_RDWR | O_CREAT)) error("open binName failed");
@@ -766,8 +766,8 @@ void setup(void) {
   pinMode(15, INPUT_PULLUP);
   digitalWrite(17, HIGH);
 
-  loadOrCreateSensorID();
-  snprintf(sensorFilename, sizeof(sensorFilename), "otherData%s.csv", sensorID);
+  loadOrCreatereaderID();
+  snprintf(sensorFilename, sizeof(sensorFilename), "otherData%s.csv", readerID);
 
   // ── Live view mode (pin 14 held LOW) ─────────────────────────────────────
   // This runs BEFORE SD init so it always works even with no SD card.
@@ -840,7 +840,7 @@ void loop(void) {
 
   Serial.println();
   Serial.println(F("Running BeeSpy3 version Combined_H"));
-  Serial.print(F("Sensor ID : ")); Serial.println(sensorID);
+  Serial.print(F("Sensor ID : ")); Serial.println(readerID);
   Serial.print(F("SD card   : ")); Serial.println(sdAvailable ? F("OK") : F("NOT DETECTED - recording disabled"));
 
   Serial.println(F("type:"));
