@@ -840,7 +840,7 @@ void loop(void) {
 
   Serial.println();
   Serial.println(F("Running BeeSpy3 version Combined_H"));
-  Serial.print(F("Sensor ID : ")); Serial.println(readerID);
+  Serial.print(F("Reader ID : ")); Serial.println(readerID);
   Serial.print(F("SD card   : ")); Serial.println(sdAvailable ? F("OK") : F("NOT DETECTED - recording disabled"));
 
   Serial.println(F("type:"));
