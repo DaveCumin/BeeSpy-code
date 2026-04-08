@@ -22,6 +22,7 @@ Usage:
 
 import os
 import sys
+import inspect
 import datetime
 import traceback
 
@@ -337,6 +338,14 @@ class _BatchWorker(QThread):
                 print(f"\n[{day}] Processing bin files…")
 
                 try:
+                    _pbf_kwargs = dict(
+                        dbx=self._dbx,
+                        dbx_folder=self._dbx_folder,
+                    )
+                    # local_bin_folder was added in a later version of localApp;
+                    # omit it gracefully on older installs
+                    if 'local_bin_folder' in inspect.signature(process_bin_files).parameters:
+                        _pbf_kwargs['local_bin_folder'] = self._bin_folder
                     specs = process_bin_files(
                         self._bin_folder or self._output_dir,
                         self._bin_files,
@@ -347,9 +356,7 @@ class _BatchWorker(QThread):
                         self._window,
                         self._minFreq,
                         self._maxFreq,
-                        dbx=self._dbx,
-                        dbx_folder=self._dbx_folder,
-                        local_bin_folder=self._bin_folder,
+                        **_pbf_kwargs,
                     )
                 except Exception as e:
                     print(f"[{day}] ERROR in process_bin_files: {e}")
