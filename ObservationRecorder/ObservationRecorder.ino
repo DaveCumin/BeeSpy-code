@@ -685,7 +685,7 @@ void createBinFile() {
   DateTime now = DateTime(2025, 8, 11, 12, 0, 0);
   #endif
   char binName[24] = {0};
-  snprintf(binName, sizeof(binName), "%04d_%02d_%02d_%02d_%02d_%02d.bin",
+  snprintf(binName, sizeof(binName), "%04d_%02d_%02d_%02d_%02d_%02d.b16",
           now.year(), now.month(), now.day(),
           now.hour(), now.minute(), now.second());
 
